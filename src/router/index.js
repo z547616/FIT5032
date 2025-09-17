@@ -5,6 +5,7 @@ import Profile from '../pages/Profile.vue'
 import Login from '../components/Login.vue'
 import Register from '../components/Register.vue'
 import Admin from '../pages/Admin.vue'
+import AnonymousStories from '../pages/AnonymousStories.vue'
 
 const routes = [
   {
@@ -18,6 +19,7 @@ const routes = [
   { path: '/register', component: Register, meta: { title: 'MindBloom | Register', icon: 'bi bi-person-plus' } },
   { path: '/home', component: Home, meta: { title: 'MindBloom | Home', icon: 'bi bi-house-door' } },
   { path: '/mood-tracker', component: MoodTracker, meta: { title: 'MindBloom | Mood Tracker', icon: 'bi bi-emoji-smile' } },
+  { path: '/anonymous-stories', component: AnonymousStories, meta: { title: 'MindBloom | Anonymous Stories', icon: 'bi bi-chat-dots' } },
   { path: '/profile', component: Profile, meta: { title: 'MindBloom | Profile', icon: 'bi bi-person-circle' } },
   { path: '/admin', component: Admin, meta: { title: 'MindBloom | Admin', icon: 'bi bi-shield-lock' } }
 ]
@@ -31,7 +33,7 @@ const router = createRouter({
 router.beforeEach((to, from, next) => {
   const loggedIn = localStorage.getItem('currentUser')
 
-  if (!loggedIn && ['/home','/mood-tracker','/profile'].includes(to.path)) {
+  if (!loggedIn && ['/home','/mood-tracker','/profile','/anonymous-stories'].includes(to.path)) {
     next('/login')
   } else if (loggedIn && (to.path === '/login' || to.path === '/register')) {
     next('/home')

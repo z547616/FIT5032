@@ -67,6 +67,7 @@
 <script setup>
 import { ref } from 'vue'
 import { useRouter } from 'vue-router'
+import { sanitizeInput } from '../utils/sanitize.js'
 
 const router = useRouter()
 const form = ref({
@@ -76,7 +77,7 @@ const form = ref({
   email: '',
   gender: '',
   age: null,
-  role: 'user'      // ← 新增字段
+  role: 'user'
 })
 const error = ref('')
 const success = ref(false)
@@ -84,6 +85,10 @@ const success = ref(false)
 function handleRegister() {
   error.value = ''
   success.value = false
+
+  // 清理输入
+  form.value.username = sanitizeInput(form.value.username, 20)
+  form.value.email = sanitizeInput(form.value.email, 50)
 
   if (form.value.password !== form.value.confirmPassword) {
     error.value = 'Passwords do not match'
@@ -106,12 +111,13 @@ function handleRegister() {
     email: form.value.email,
     gender: form.value.gender,
     age: form.value.age,
+    role: form.value.role,
     nickname: '',
-    avatar: '',
-    role: form.value.role     // ← 存入角色
+    avatar: ''
   })
   localStorage.setItem('users', JSON.stringify(users))
   success.value = true
   setTimeout(() => router.push('/login'), 1200)
 }
 </script>
+
