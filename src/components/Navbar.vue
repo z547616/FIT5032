@@ -18,7 +18,7 @@
       </div>
 
       <!-- 右侧用户信息 -->
-      <div class="position-relative">
+      <div v-if="userLoaded" class="position-relative">
         <button ref="userBtn" class="user-btn d-flex align-items-center gap-2" @click="toggleUserMenu">
           <img :src="avatarSrc" class="rounded-circle" width="32" height="32" alt="avatar" />
           <span class="text-white fw-semibold">{{ displayName }}</span>
@@ -65,36 +65,58 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
-import { useRouter } from 'vue-router'
+import { ref, computed, onMounted, onBeforeUnmount } from "vue"
+import { useRouter } from "vue-router"
+
+// Firebase
+import { auth, db } from "../firebase"
+import { onAuthStateChanged, signOut } from "firebase/auth"
+import { doc, getDoc } from "firebase/firestore"
 
 const router = useRouter()
 
 const navItems = [
-  { label: 'Home', icon: 'bi bi-house-door', path: '/home' },
-  { label: 'Mood Tracker', icon: 'bi bi-emoji-smile', path: '/mood-tracker' },
-  { label: 'Anonymous Stories', icon: 'bi bi-chat-dots', path: '/anonymous-stories' },
-  { label: 'Resources', icon: 'bi bi-book', path: '#' },
-  { label: 'Community & Support', icon: 'bi bi-people', path: '#' },
-  { label: 'Get Help', icon: 'bi bi-life-preserver', path: '#' },
-  { label: 'Profile', icon: 'bi bi-person-circle', path: '/profile' },
+  { label: "Home", icon: "bi bi-house-door", path: "/home" },
+  { label: "Mood Tracker", icon: "bi bi-emoji-smile", path: "/mood-tracker" },
+  { label: "Anonymous Stories", icon: "bi bi-chat-dots", path: "/anonymous-stories" },
+  { label: "Resources", icon: "bi bi-book", path: "#" },
+  { label: "Community & Support", icon: "bi bi-people", path: "#" },
+  { label: "Get Help", icon: "bi bi-life-preserver", path: "#" },
+  { label: "Profile", icon: "bi bi-person-circle", path: "/profile" },
 ]
 
 const isOpen = ref(false)
 const showUserMenu = ref(false)
 
-/** 实时获取当前用户信息与角色 */
-const currentUser = computed(() => localStorage.getItem('currentUser') || '')
-const allUsers = computed(() => JSON.parse(localStorage.getItem('users') || '[]'))
-const user = computed(() => allUsers.value.find(u => u.username === currentUser.value) || {})
-const role = computed(() => user.value.role || 'user')
+const userData = ref({})
+const role = ref("user")
+const userLoaded = ref(false)
 
-const displayName = computed(() => user.value.nickname || user.value.username || 'User')
+onAuthStateChanged(auth, async (firebaseUser) => {
+  if (firebaseUser) {
+    const docRef = doc(db, "users", firebaseUser.uid)
+    const docSnap = await getDoc(docRef)
+    if (docSnap.exists()) {
+      userData.value = docSnap.data()
+      role.value = userData.value.role || "user"
+    } else {
+      userData.value = { username: firebaseUser.email, role: "user" }
+      role.value = "user"
+    }
+  } else {
+    userData.value = {}
+    role.value = "user"
+  }
+  userLoaded.value = true
+})
 
-/** 美观默认头像（渐变圆形 + 白色人形） */
+const displayName = computed(() =>
+  userData.value.nickname || userData.value.username || userData.value.email || "User"
+)
+
+/** 默认头像（渐变背景 + 人形图标） */
 function makeDefaultAvatar() {
-  const svg =
-    `<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128">
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128">
       <defs>
         <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
           <stop offset="0" stop-color="#4facfe"/>
@@ -103,27 +125,29 @@ function makeDefaultAvatar() {
       </defs>
       <circle cx="64" cy="64" r="64" fill="url(#g)"/>
       <path fill="#fff" d="M64 72a24 24 0 1 0 0-48 24 24 0 0 0 0 48zm0 12c-20 0-36 12-36 24v8h72v-8c0-12-16-24-36-24z"/>
-    </svg>`;
-  return 'data:image/svg+xml;base64,' + btoa(svg);
+    </svg>`
+  return "data:image/svg+xml;base64," + btoa(svg)
 }
 
 const avatarSrc = computed(() =>
-  user.value.avatar && user.value.avatar.length > 0 ? user.value.avatar : makeDefaultAvatar()
+  userData.value.avatar && userData.value.avatar.length > 0
+    ? userData.value.avatar
+    : makeDefaultAvatar()
 )
 
 function toggleUserMenu() {
   showUserMenu.value = !showUserMenu.value
 }
 function goHome() {
-  router.push('/home')
+  router.push("/home")
 }
 function goProfile() {
-  router.push('/profile')
+  router.push("/profile")
   showUserMenu.value = false
 }
-function logout() {
-  localStorage.removeItem('currentUser')
-  router.push('/login')
+async function logout() {
+  await signOut(auth)
+  router.push("/login")
 }
 
 /** 点击页面空白处关闭用户菜单 */
@@ -132,14 +156,19 @@ const userBtn = ref(null)
 function handleClickOutside(e) {
   const menuEl = userMenu.value
   const btnEl = userBtn.value
-  if (showUserMenu.value && menuEl && btnEl && !menuEl.contains(e.target) && !btnEl.contains(e.target)) {
+  if (
+    showUserMenu.value &&
+    menuEl &&
+    btnEl &&
+    !menuEl.contains(e.target) &&
+    !btnEl.contains(e.target)
+  ) {
     showUserMenu.value = false
   }
 }
-onMounted(() => document.addEventListener('click', handleClickOutside))
-onBeforeUnmount(() => document.removeEventListener('click', handleClickOutside))
+onMounted(() => document.addEventListener("click", handleClickOutside))
+onBeforeUnmount(() => document.removeEventListener("click", handleClickOutside))
 </script>
-
 
 <style scoped>
 /* 侧边菜单 */
@@ -157,9 +186,15 @@ onBeforeUnmount(() => document.removeEventListener('click', handleClickOutside))
   box-shadow: 2px 0 15px rgba(0, 0, 0, 0.3);
   border-right: 1px solid rgba(255, 255, 255, 0.15);
 }
-.side-menu.open { left: 0; }
+.side-menu.open {
+  left: 0;
+}
 
-.nav { list-style: none; padding-left: 0; margin: 0; }
+.nav {
+  list-style: none;
+  padding-left: 0;
+  margin: 0;
+}
 .nav-link {
   color: #ffffff !important;
   font-weight: 500;
@@ -172,12 +207,18 @@ onBeforeUnmount(() => document.removeEventListener('click', handleClickOutside))
   margin: 4px 8px;
   text-align: left;
 }
-.nav-link:hover { background-color: rgba(255,255,255,0.15); transform: translateX(4px); }
-.nav-link.active { background-color: rgba(255,255,255,0.25); }
+.nav-link:hover {
+  background-color: rgba(255, 255, 255, 0.15);
+  transform: translateX(4px);
+}
+.nav-link.active {
+  background-color: rgba(255, 255, 255, 0.25);
+}
 
 .overlay {
-  position: fixed; inset: 0;
-  background-color: rgba(0,0,0,0.4);
+  position: fixed;
+  inset: 0;
+  background-color: rgba(0, 0, 0, 0.4);
   backdrop-filter: blur(2px);
   z-index: 1040;
 }
@@ -190,7 +231,9 @@ onBeforeUnmount(() => document.removeEventListener('click', handleClickOutside))
   border-radius: 6px;
   transition: background-color 0.25s;
 }
-.user-btn:hover { background-color: rgba(255,255,255,0.15); }
+.user-btn:hover {
+  background-color: rgba(255, 255, 255, 0.15);
+}
 
 /* 用户下拉菜单 */
 .dropdown-menu-custom {
@@ -199,34 +242,56 @@ onBeforeUnmount(() => document.removeEventListener('click', handleClickOutside))
   right: 0;
   background: white;
   border-radius: 6px;
-  box-shadow: 0 4px 16px rgba(0,0,0,0.1);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.1);
   min-width: 160px;
   padding: 4px;
   z-index: 1200;
 }
 .dropdown-item-custom {
-  display: flex; align-items: center;
+  display: flex;
+  align-items: center;
   width: 100%;
-  background: transparent; border: none;
-  padding: 8px 12px; text-align: left;
+  background: transparent;
+  border: none;
+  padding: 8px 12px;
+  text-align: left;
   border-radius: 4px;
   transition: background-color 0.25s;
 }
-.dropdown-item-custom:hover { background-color: rgba(13,110,253,0.1); }
+.dropdown-item-custom:hover {
+  background-color: rgba(13, 110, 253, 0.1);
+}
 
 .menu-header {
-  display: flex; align-items: center; justify-content: space-between;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
   padding: 12px 16px;
-  border-bottom: 1px solid rgba(255,255,255,0.15);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.15);
 }
-.menu-title { color: #fff; font-weight: 500; font-size: 1rem; }
+.menu-title {
+  color: #fff;
+  font-weight: 500;
+  font-size: 1rem;
+}
 .close-btn {
-  color: #fff; background: transparent; border: none;
-  padding: 8px; border-radius: 6px; cursor: pointer;
+  color: #fff;
+  background: transparent;
+  border: none;
+  padding: 8px;
+  border-radius: 6px;
+  cursor: pointer;
   transition: background-color 0.25s, transform 0.15s;
 }
-.close-btn:hover { background-color: rgba(255,255,255,0.15); transform: translateX(2px); }
-.close-btn:active { background-color: rgba(255,255,255,0.25); }
+.close-btn:hover {
+  background-color: rgba(255, 255, 255, 0.15);
+  transform: translateX(2px);
+}
+.close-btn:active {
+  background-color: rgba(255, 255, 255, 0.25);
+}
 
-.cursor-pointer { cursor: pointer; }
+.cursor-pointer {
+  cursor: pointer;
+}
 </style>

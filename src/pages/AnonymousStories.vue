@@ -24,14 +24,13 @@
 
         <!-- 星星评分 -->
         <div class="mb-3 rating-stars"
-             :class="{ editing: editingStory[story.id] }"
              @mouseleave="hoverRatings[story.id] = 0">
           <div
             v-for="i in 5"
             :key="i"
             class="star"
-            @mousemove="editingStory[story.id] && updateHover(story.id, i, $event)"
-            @click="editingStory[story.id] && confirmRating(story.id, i)"
+            @mousemove="updateHover(story.id, i, $event)"
+            @click="handleClick(story.id, i)"
           >
             <div
               class="star-fill"
@@ -81,13 +80,10 @@
 import { reactive, ref, onMounted } from 'vue'
 import { sanitizeInput } from '../utils/sanitize.js'
 
-
-
 const currentUser = localStorage.getItem('currentUser') || 'Guest'
-
-// 每个故事独立的悬停评分状态与编辑状态
 const hoverRatings = reactive({})
 const editingStory = reactive({})
+const newComments = reactive({})
 
 const stories = reactive([
   {
@@ -110,9 +106,6 @@ const stories = reactive([
   },
 ])
 
-const newComments = reactive({})
-
-// 初始化：从 localStorage 载入历史评分/评论
 onMounted(() => {
   const saved = JSON.parse(localStorage.getItem('stories') || '[]')
   if (saved.length) {
@@ -141,7 +134,14 @@ function updateHover(storyId, starIndex, e) {
   hoverRatings[storyId] = (starIndex - 1) + half
 }
 
-function confirmRating(storyId, starIndex) {
+function handleClick(storyId, i) {
+  // 只有当还未评分 或 正在编辑状态时才允许评分
+  if (userRating(storyId) === 0 || editingStory[storyId]) {
+    confirmRating(storyId, i)
+  }
+}
+
+function confirmRating(storyId) {
   const score = hoverRatings[storyId]
   const story = stories.find(s => s.id === storyId)
   const existing = story.ratings.find(r => r.user === currentUser)
@@ -178,10 +178,8 @@ function calcFill(i, story) {
 
 function startEdit(storyId) {
   const story = stories.find(s => s.id === storyId)
-  // 移除当前用户的原评分
   story.ratings = story.ratings.filter(r => r.user !== currentUser)
   saveStories()
-  // 进入编辑模式并重置为灰色
   editingStory[storyId] = true
   hoverRatings[storyId] = 0
 }
@@ -200,7 +198,7 @@ function startEdit(storyId) {
 .rating-stars {
   display: flex;
   gap: 6px;
-  width: 160px; /* 限定为5颗星的宽度 */
+  width: 160px;
 }
 
 .star {

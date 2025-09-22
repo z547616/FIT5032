@@ -7,21 +7,22 @@ import Register from '../components/Register.vue'
 import Admin from '../pages/Admin.vue'
 import AnonymousStories from '../pages/AnonymousStories.vue'
 
+// Firebase
+import { getAuth, onAuthStateChanged } from "firebase/auth"
+import { getFirestore, doc, getDoc } from "firebase/firestore"
+
 const routes = [
   {
     path: '/',
-    redirect: () => {
-      const loggedIn = localStorage.getItem('currentUser')
-      return loggedIn ? '/home' : '/login'
-    }
+    redirect: '/home'
   },
   { path: '/login', component: Login, meta: { title: 'MindBloom | Login', icon: 'bi bi-box-arrow-in-right' } },
   { path: '/register', component: Register, meta: { title: 'MindBloom | Register', icon: 'bi bi-person-plus' } },
-  { path: '/home', component: Home, meta: { title: 'MindBloom | Home', icon: 'bi bi-house-door' } },
-  { path: '/mood-tracker', component: MoodTracker, meta: { title: 'MindBloom | Mood Tracker', icon: 'bi bi-emoji-smile' } },
-  { path: '/anonymous-stories', component: AnonymousStories, meta: { title: 'MindBloom | Anonymous Stories', icon: 'bi bi-chat-dots' } },
-  { path: '/profile', component: Profile, meta: { title: 'MindBloom | Profile', icon: 'bi bi-person-circle' } },
-  { path: '/admin', component: Admin, meta: { title: 'MindBloom | Admin', icon: 'bi bi-shield-lock' } }
+  { path: '/home', component: Home, meta: { requiresAuth: true, title: 'MindBloom | Home', icon: 'bi bi-house-door' } },
+  { path: '/mood-tracker', component: MoodTracker, meta: { requiresAuth: true, title: 'MindBloom | Mood Tracker', icon: 'bi bi-emoji-smile' } },
+  { path: '/anonymous-stories', component: AnonymousStories, meta: { requiresAuth: true, title: 'MindBloom | Anonymous Stories', icon: 'bi bi-chat-dots' } },
+  { path: '/profile', component: Profile, meta: { requiresAuth: true, title: 'MindBloom | Profile', icon: 'bi bi-person-circle' } },
+  { path: '/admin', component: Admin, meta: { requiresAuth: true, requiresAdmin: true, title: 'MindBloom | Admin', icon: 'bi bi-shield-lock' } }
 ]
 
 const router = createRouter({
@@ -29,17 +30,38 @@ const router = createRouter({
   routes
 })
 
-// 登录访问控制
+// 登录 + 管理员访问控制
 router.beforeEach((to, from, next) => {
-  const loggedIn = localStorage.getItem('currentUser')
+  const auth = getAuth()
+  const db = getFirestore()
 
-  if (!loggedIn && ['/home','/mood-tracker','/profile','/anonymous-stories'].includes(to.path)) {
-    next('/login')
-  } else if (loggedIn && (to.path === '/login' || to.path === '/register')) {
-    next('/home')
-  } else {
-    next()
-  }
+  const requiresAuth = to.matched.some(record => record.meta.requiresAuth)
+  const requiresAdmin = to.matched.some(record => record.meta.requiresAdmin)
+
+  onAuthStateChanged(auth, async (user) => {
+    if (!user && requiresAuth) {
+      // 未登录 → login
+      next('/login')
+    } else if (user && (to.path === '/login' || to.path === '/register')) {
+      // 已登录 → home
+      next('/home')
+    } else if (user && requiresAdmin) {
+      // 需要管理员权限
+      try {
+        const userDoc = await getDoc(doc(db, "users", user.uid))
+        if (userDoc.exists() && userDoc.data().role === "admin") {
+          next() // 允许进入
+        } else {
+          next('/home') // 非管理员 → 回 home
+        }
+      } catch (err) {
+        console.error("Error checking admin role:", err)
+        next('/home')
+      }
+    } else {
+      next()
+    }
+  })
 })
 
 // 页面标题 + favicon

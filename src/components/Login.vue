@@ -6,19 +6,19 @@
 
         <form @submit.prevent="handleLogin">
           <div class="mb-3">
-            <label class="form-label">Username</label>
-            <input v-model="username" type="text" class="form-control" required>
+            <label class="form-label">Email</label>
+            <input v-model="email" type="email" class="form-control" required />
           </div>
 
           <div class="mb-3">
             <label class="form-label">Password</label>
-            <input v-model="password" type="password" class="form-control" required>
+            <input v-model="password" type="password" class="form-control" required />
           </div>
 
           <div class="mb-3">
             <label class="form-label">Captcha</label>
             <div class="input-group">
-              <input v-model="captchaInput" type="text" class="form-control" required>
+              <input v-model="captchaInput" type="text" class="form-control" required />
               <span class="input-group-text">{{ captcha }}</span>
               <button type="button" class="btn btn-outline-secondary" @click="generateCaptcha">↻</button>
             </div>
@@ -29,7 +29,8 @@
         </form>
 
         <div class="text-center mt-3">
-          <small>Don't have an account?
+          <small>
+            Don't have an account?
             <router-link to="/register">Register now</router-link>
           </small>
         </div>
@@ -39,42 +40,73 @@
 </template>
 
 <script setup>
-import { ref } from 'vue'
-import { useRouter } from 'vue-router'
+import { ref } from "vue"
+import { useRouter } from "vue-router"
+
+// Firebase
+import { auth, db } from "../firebase"
+import { signInWithEmailAndPassword } from "firebase/auth"
+import { doc, getDoc } from "firebase/firestore"
 
 const router = useRouter()
-const username = ref('')
-const password = ref('')
-const captcha = ref('')
-const captchaInput = ref('')
-const error = ref('')
+const email = ref("")
+const password = ref("")
+const captcha = ref("")
+const captchaInput = ref("")
+const error = ref("")
 
 function generateCaptcha() {
   captcha.value = Math.random().toString(36).substring(2, 6).toUpperCase()
 }
 generateCaptcha()
 
-function handleLogin() {
-  error.value = ''
+async function handleLogin() {
+  error.value = ""
 
-  const users = JSON.parse(localStorage.getItem('users') || '[]')
-  const user = users.find(
-    u => u.username === username.value && u.password === password.value
-  )
-
-  if (!user) {
-    error.value = 'Invalid username or password'
+  // 校验验证码
+  if (captchaInput.value.toUpperCase() !== captcha.value) {
+    error.value = "Invalid captcha"
+    generateCaptcha()
     return
   }
 
-  // 登录成功
-  localStorage.setItem('currentUser', user.username)
+  try {
+    // Firebase Auth 登录
+    const userCredential = await signInWithEmailAndPassword(
+      auth,
+      email.value,
+      password.value
+    )
+    const user = userCredential.user
 
-  const role = user.role || 'user'  // 容错处理
-  if (role === 'admin') {
-    router.push('/admin')
-  } else {
-    router.push('/home')
+    // Firestore 获取用户信息
+    const docRef = doc(db, "users", user.uid)
+    const docSnap = await getDoc(docRef)
+
+    if (docSnap.exists()) {
+      const userData = docSnap.data()
+      const role = userData.role || "user"
+
+      // 可选：缓存当前用户信息（供 Navbar 使用）
+      localStorage.setItem("currentUser", JSON.stringify({
+        uid: user.uid,
+        email: user.email,
+        username: userData.username,
+        role: role
+      }))
+
+      // 跳转
+      if (role === "admin") {
+        router.push("/admin")
+      } else {
+        router.push("/home")
+      }
+    } else {
+      error.value = "User profile not found in database"
+    }
+  } catch (err) {
+    error.value = err.message
+    generateCaptcha()
   }
 }
 </script>
