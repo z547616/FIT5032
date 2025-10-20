@@ -14,141 +14,231 @@
               <form @submit.prevent="submitForm">
                 <div class="mb-3">
                   <label class="form-label fw-semibold">Mood (0-10)</label>
-                  <input v-model.number="mood" type="number" class="form-control rounded-3" min="0" max="10" required>
+                  <input
+                    v-model.number="mood"
+                    type="number"
+                    class="form-control rounded-3"
+                    min="0" max="10"
+                    required
+                  />
                 </div>
 
                 <div class="mb-3">
                   <label class="form-label fw-semibold">Notes</label>
-                  <textarea v-model="notes" class="form-control rounded-3" rows="3" maxlength="100"
-                    placeholder="How are you feeling today?"></textarea>
+                  <textarea
+                    v-model="notes"
+                    class="form-control rounded-3"
+                    rows="3"
+                    maxlength="200"
+                    placeholder="How are you feeling today?"
+                  ></textarea>
                 </div>
 
                 <button type="submit" class="btn btn-primary w-100 rounded-3">
-                  Save Entry
+                  {{ editingId ? "Update Entry" : "Save Entry" }}
                 </button>
               </form>
             </div>
           </div>
         </div>
 
-        <!-- History -->
+        <!-- History + Count -->
         <div class="col-md-6">
           <div class="card border-0 shadow-sm rounded-4">
             <div class="card-body p-4">
-              <h4 class="mb-3">History</h4>
+              <div class="d-flex align-items-center justify-content-between mb-3">
+                <h4 class="mb-0">History</h4>
+                <span class="badge bg-primary-subtle text-primary">
+                  Total: <strong>{{ totalCount }}</strong>
+                </span>
+              </div>
 
               <!-- Search -->
               <div class="mb-3">
-                <input v-model="searchQuery" type="text" class="form-control rounded-3" placeholder="Search notes...">
+                <input
+                  v-model="searchQuery"
+                  type="text"
+                  class="form-control rounded-3"
+                  placeholder="Search notes..."
+                />
               </div>
 
               <div v-if="entries.length === 0" class="text-muted">No entries yet.</div>
               <ul class="list-group list-group-flush">
                 <li v-for="e in filteredEntries" :key="e.id" class="list-group-item px-0 py-2">
-                  <div class="fw-semibold">{{ e.date }} — Mood: {{ e.mood }}/10</div>
+                  <div class="fw-semibold">
+                    {{ e.date }} — Mood: {{ e.mood }}/10
+                  </div>
                   <div class="small text-muted">{{ e.notes }}</div>
 
-                  <!-- 操作按钮 -->
                   <div class="mt-1 d-flex gap-2">
                     <button class="btn btn-sm btn-outline-secondary" @click="editEntry(e)">Edit</button>
                     <button class="btn btn-sm btn-outline-danger" @click="deleteEntry(e.id)">Delete</button>
                   </div>
                 </li>
               </ul>
+
             </div>
           </div>
         </div>
+
       </div>
     </div>
   </div>
 </template>
 
 <script setup>
-import { ref, reactive, computed, onMounted } from "vue"
-import { auth, db } from "../firebase"
+import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
+import { auth, db, functions } from '../firebase'
+import { onAuthStateChanged } from 'firebase/auth'
 import {
-  collection,
-  addDoc,
-  getDocs,
-  query,
-  orderBy,
-  deleteDoc,
-  doc,
-  updateDoc,
-  serverTimestamp
-} from "firebase/firestore"
+  collection, addDoc, query, orderBy,
+  deleteDoc, doc, updateDoc, serverTimestamp,
+  onSnapshot
+} from 'firebase/firestore'
+import { httpsCallable } from 'firebase/functions'
 
-const mood = ref("")
-const notes = ref("")
-const entries = reactive([])
-const searchQuery = ref("")
+/* ---------- state ---------- */
+const mood = ref('')
+const notes = ref('')
+const entries = ref([])       // 用 ref 包裹数组，便于整体替换
+const searchQuery = ref('')
 const editingId = ref(null)
+const totalCount = ref(0)
 
-// 当前用户 ID（需保证已登录）
-const userId = auth.currentUser?.uid
+/* ---------- helpers ---------- */
+const uid = () => auth.currentUser?.uid || null
 
-// 监听挂载时获取数据
-onMounted(async () => {
-  await fetchEntries()
+/* ---------- 本地与云端一致的 notes 规范化 ---------- */
+function normalizeNotesLocal(input = '') {
+  const raw = String(input || '').trim()
+  if (!raw) return ''
+  const parts = raw.split(/([.!?])\s+/).filter(Boolean)
+  const sentences = []
+  for (let i = 0; i < parts.length; i += 2) {
+    const s = (parts[i] || '').trim()
+    const p = (parts[i + 1] || '').trim()
+    if (!s) continue
+    const cap = s.charAt(0).toUpperCase() + s.slice(1)
+    sentences.push(cap + (p || ''))
+  }
+  if (!sentences.length) return ''
+  if (!/[.!?]$/.test(sentences[sentences.length - 1])) {
+    sentences[sentences.length - 1] += '.'
+  }
+  return sentences.join(' ')
+}
+
+/* ---------- auth + 实时订阅 ---------- */
+let unsubscribeAuth = null
+let unsubscribeEntries = null
+
+onMounted(() => {
+  unsubscribeAuth = onAuthStateChanged(auth, async (user) => {
+    if (unsubscribeEntries) { unsubscribeEntries(); unsubscribeEntries = null }
+
+    if (user) {
+      subscribeEntries(user.uid)
+      await fetchCount() // 计数还是调用云函数
+    } else {
+      entries.value = []
+      totalCount.value = 0
+    }
+  })
+})
+onBeforeUnmount(() => {
+  if (typeof unsubscribeAuth === 'function') unsubscribeAuth()
+  if (typeof unsubscribeEntries === 'function') unsubscribeEntries()
 })
 
-// 🔹 获取用户的心情记录
-async function fetchEntries() {
-  if (!userId) return
-  entries.length = 0
+function subscribeEntries(userId) {
   const q = query(
-    collection(db, "users", userId, "moodEntries"),
-    orderBy("createdAt", "desc")
+    collection(db, 'users', userId, 'moodEntries'),
+    orderBy('createdAt', 'desc')
   )
-  const snap = await getDocs(q)
-  snap.forEach((docSnap) => {
-    entries.push({ id: docSnap.id, ...docSnap.data() })
+  unsubscribeEntries = onSnapshot(q, (snap) => {
+    const list = snap.docs.map(d => {
+      const data = d.data()
+      const dateStr =
+        data.date ||
+        (data.createdAt?.toDate ? data.createdAt.toDate().toLocaleDateString() : '')
+      return {
+        id: d.id,
+        date: dateStr,
+        mood: data.mood,
+        notes: data.notes ?? ''
+      }
+    })
+    entries.value = list
   })
 }
 
-// 🔹 保存/更新记录
-async function submitForm() {
+/* ---------- cloud function: count ---------- */
+async function fetchCount () {
+  if (!uid()) return
+  try {
+    const call = httpsCallable(functions, 'getMoodCount')
+    const res = await call()
+    totalCount.value = res?.data?.count ?? entries.value.length
+  } catch (e) {
+    console.error('[getMoodCount] error', e)
+    totalCount.value = entries.value.length
+  }
+}
+
+/* ---------- create / update（带本地预格式化） ---------- */
+async function submitForm () {
+  const userId = uid()
   if (!userId) return
+  const m = Number(mood.value)
+  if (Number.isNaN(m) || m < 0 || m > 10) return
+
+  // 本地先做与云端一致的格式化（乐观）
+  const normalized = normalizeNotesLocal(notes.value)
+
   if (editingId.value) {
-    // 更新
-    const refDoc = doc(db, "users", userId, "moodEntries", editingId.value)
-    await updateDoc(refDoc, {
-      mood: mood.value,
-      notes: notes.value
+    await updateDoc(doc(db, 'users', userId, 'moodEntries', editingId.value), {
+      mood: m,
+      notes: normalized
+      // 不写 formatted 之类的标志；云函数 onDocumentWritten 会比较差异再写
     })
     editingId.value = null
   } else {
-    // 新增
-    await addDoc(collection(db, "users", userId, "moodEntries"), {
+    await addDoc(collection(db, 'users', userId, 'moodEntries'), {
       date: new Date().toLocaleDateString(),
-      mood: mood.value,
-      notes: notes.value,
+      mood: m,
+      notes: normalized,            // 新建也用本地规范化；云端会复核
       createdAt: serverTimestamp()
     })
   }
-  mood.value = ""
-  notes.value = ""
-  await fetchEntries()
+
+  // 重置表单；列表会通过 onSnapshot 自动更新（包含云函数的二次写回）
+  mood.value = ''
+  notes.value = ''
+
+  // 刷新计数
+  await fetchCount()
 }
 
-// 🔹 删除
-async function deleteEntry(id) {
+/* ---------- delete ---------- */
+async function deleteEntry (id) {
+  const userId = uid()
   if (!userId) return
-  await deleteDoc(doc(db, "users", userId, "moodEntries", id))
-  await fetchEntries()
+  await deleteDoc(doc(db, 'users', userId, 'moodEntries', id))
+  await fetchCount()
 }
 
-// 🔹 编辑
-function editEntry(entry) {
+/* ---------- edit fill ---------- */
+function editEntry (entry) {
   editingId.value = entry.id
   mood.value = entry.mood
   notes.value = entry.notes
 }
 
-// 🔹 模糊搜索
+/* ---------- search filter ---------- */
 const filteredEntries = computed(() =>
-  entries.filter((e) =>
-    e.notes.toLowerCase().includes(searchQuery.value.toLowerCase())
+  entries.value.filter(e =>
+    (e.notes || '').toLowerCase().includes(searchQuery.value.toLowerCase())
   )
 )
 </script>

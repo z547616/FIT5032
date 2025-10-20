@@ -22,7 +22,13 @@ const routes = [
   { path: '/mood-tracker', component: MoodTracker, meta: { requiresAuth: true, title: 'MindBloom | Mood Tracker', icon: 'bi bi-emoji-smile' } },
   { path: '/anonymous-stories', component: AnonymousStories, meta: { requiresAuth: true, title: 'MindBloom | Anonymous Stories', icon: 'bi bi-chat-dots' } },
   { path: '/profile', component: Profile, meta: { requiresAuth: true, title: 'MindBloom | Profile', icon: 'bi bi-person-circle' } },
-  { path: '/admin', component: Admin, meta: { requiresAuth: true, requiresAdmin: true, title: 'MindBloom | Admin', icon: 'bi bi-shield-lock' } }
+  { path: '/admin', component: Admin, meta: { requiresAuth: true, requiresAdmin: true, title: 'MindBloom | Admin', icon: 'bi bi-shield-lock' } },
+   {
+    path: '/get-all-mood',
+    // 如果你已手动 import 了组件，可改为：component: GetAllMood,
+    component: () => import('../pages/GetAllMood.vue'),
+    meta: { requiresAuth: true, title: 'MindBloom | GetAllMood (JSON)', icon: 'bi bi-code' }
+  },
 ]
 
 const router = createRouter({

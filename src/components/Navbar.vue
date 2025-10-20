@@ -1,37 +1,42 @@
 <template>
   <div>
-    <!-- 顶部栏：汉堡菜单 + 标题 + 用户信息 -->
-    <nav class="navbar bg-primary shadow-sm px-3 d-flex align-items-center">
-      <!-- 左侧菜单按钮（仅普通用户） -->
+    <!-- 顶部栏：左(菜单) - 中(品牌居中) - 右(天气+用户) -->
+    <nav class="navbar bg-primary shadow-sm px-3 d-grid align-items-center topbar-grid">
+      <!-- 左侧：菜单按钮（仅普通用户） -->
       <button
         v-if="role !== 'admin'"
-        class="btn btn-link text-white fs-3 me-3"
+        class="btn btn-link text-white fs-3"
         @click="isOpen = true"
+        aria-label="Open menu"
       >
         <i class="bi bi-list"></i>
       </button>
 
-      <!-- 中间品牌名 -->
-      <div class="navbar-brand text-white fw-bold mx-auto cursor-pointer" @click="goHome">
-        <span v-if="role === 'admin'">Welcome, Administrator 🌱</span>
-        <span v-else>MindBloom 🌱</span>
+      <!-- 中间：品牌（始终居中且不与右侧重叠） -->
+      <div class="text-white fw-bold text-center brand-text cursor-pointer">
+        <span v-if="role === 'admin'" @click="goHome">Welcome, Administrator 🌱</span>
+        <span v-else @click="goHome">MindBloom 🌱</span>
       </div>
 
-      <!-- 右侧用户信息 -->
-      <div v-if="userLoaded" class="position-relative">
-        <button ref="userBtn" class="user-btn d-flex align-items-center gap-2" @click="toggleUserMenu">
-          <img :src="avatarSrc" class="rounded-circle" width="32" height="32" alt="avatar" />
-          <span class="text-white fw-semibold">{{ displayName }}</span>
-        </button>
+      <!-- 右侧：天气徽章 + 用户信息（自适应不挤占中间区域） -->
+      <div class="d-flex align-items-center gap-2 justify-content-end">
+        <WeatherBadge /> <!-- 需存在 src/components/WeatherBadge.vue，并配置好 OPENWEATHER 的 API KEY -->
 
-        <!-- 用户菜单 -->
-        <div v-if="showUserMenu" ref="userMenu" class="dropdown-menu-custom">
-          <button class="dropdown-item-custom" @click="goProfile">
-            <i class="bi bi-person-circle me-2"></i> Profile
+        <div v-if="userLoaded" class="position-relative">
+          <button ref="userBtn" class="user-btn d-flex align-items-center gap-2" @click="toggleUserMenu">
+            <img :src="avatarSrc" class="rounded-circle" width="32" height="32" alt="avatar" />
+            <span class="text-white fw-semibold">{{ displayName }}</span>
           </button>
-          <button class="dropdown-item-custom" @click="logout">
-            <i class="bi bi-box-arrow-right me-2"></i> Log out
-          </button>
+
+          <!-- 用户菜单 -->
+          <div v-if="showUserMenu" ref="userMenu" class="dropdown-menu-custom">
+            <button class="dropdown-item-custom" @click="goProfile">
+              <i class="bi bi-person-circle me-2"></i> Profile
+            </button>
+            <button class="dropdown-item-custom" @click="logout">
+              <i class="bi bi-box-arrow-right me-2"></i> Log out
+            </button>
+          </div>
         </div>
       </div>
     </nav>
@@ -40,7 +45,7 @@
     <div v-if="role !== 'admin'" class="side-menu" :class="{ open: isOpen }">
       <div class="menu-header">
         <span class="menu-title">Menu</span>
-        <button class="close-btn" @click="isOpen = false">
+        <button class="close-btn" @click="isOpen = false" aria-label="Close menu">
           <i class="bi bi-x-lg"></i>
         </button>
       </div>
@@ -67,6 +72,7 @@
 <script setup>
 import { ref, computed, onMounted, onBeforeUnmount } from "vue"
 import { useRouter } from "vue-router"
+import WeatherBadge from "./WeatherBadge.vue" // 天气组件
 
 // Firebase
 import { auth, db } from "../firebase"
@@ -171,6 +177,31 @@ onBeforeUnmount(() => document.removeEventListener("click", handleClickOutside))
 </script>
 
 <style scoped>
+/* 顶部网格：左(内容自宽) 中(自适应) 右(自宽) — 中间始终居中且不与左右重叠 */
+.topbar-grid {
+  display: grid !important;
+  grid-template-columns: auto 1fr auto;
+  column-gap: 8px;
+  min-height: 56px; /* 与原先 navbar 高度一致 */
+}
+
+/* 品牌文字保持与此前一致的可读性 */
+.brand-text {
+  font-size: 1.25rem; /* ≈ Bootstrap fs-4 */
+  line-height: 1.2;
+  user-select: none;
+}
+
+/* 在窄屏时，确保品牌不会被遮挡、同时两侧可换行或压缩 */
+@media (max-width: 480px) {
+  .brand-text {
+    font-size: 1.125rem;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+}
+
 /* 侧边菜单 */
 .side-menu {
   position: fixed;
