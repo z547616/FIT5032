@@ -1,3 +1,4 @@
+<!-- Abandoned -->
 <template>
   <div class="container py-4">
     <h2 class="mb-4 text-center text-primary">🌱 Anonymous Stories</h2>

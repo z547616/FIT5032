@@ -85,11 +85,14 @@ const navItems = [
   { label: "Home", icon: "bi bi-house-door", path: "/home" },
   { label: "Mood Tracker", icon: "bi bi-emoji-smile", path: "/mood-tracker" },
   { label: "Mood Space", icon: "bi bi-chat-heart", path: "/mood-space" },
-  { label: "Resources", icon: "bi bi-book", path: "#" },
-  { label: "Community & Support", icon: "bi bi-people", path: "#" },
-  { label: "Get Help", icon: "bi bi-life-preserver", path: "#" },
+  { label: 'Mood Walks', icon: 'bi bi-signpost', path: '/mood-walks' },
+  // { label: 'Find Help', icon: 'bi bi-geo-alt', path: '/map-explore' },
   { label: "Profile", icon: "bi bi-person-circle", path: "/profile" },
 ]
+
+  // { label: "Resources", icon: "bi bi-book", path: "#" },
+  // { label: "Community & Support", icon: "bi bi-people", path: "#" },
+  // { label: "Get Help", icon: "bi bi-life-preserver", path: "#" },
 
 const isOpen = ref(false)
 const showUserMenu = ref(false)

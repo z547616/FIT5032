@@ -5,6 +5,7 @@ import 'bootstrap/dist/css/bootstrap.min.css'
 import 'bootstrap-icons/font/bootstrap-icons.css'
 import { auth } from './firebase'
 import { onAuthStateChanged } from 'firebase/auth'
+import 'mapbox-gl/dist/mapbox-gl.css'
 
 createApp(App).use(router).mount('#app')
 

@@ -6,6 +6,8 @@ import Login from '../components/Login.vue'
 import Register from '../components/Register.vue'
 import Admin from '../pages/Admin.vue'
 import MoodSpace from '../pages/MoodSpace.vue'
+import MapExplore from '../pages/MapExplore.vue'
+import MoodWalks from '../pages/MoodWalks.vue'
 
 // Firebase
 import { getAuth, onAuthStateChanged } from "firebase/auth"
@@ -23,6 +25,8 @@ const routes = [
   { path: '/mood-space', component: MoodSpace, meta: { requiresAuth: true, title: 'MindBloom | Mood Space', icon: 'bi bi-chat-heart' } },
   { path: '/profile', component: Profile, meta: { requiresAuth: true, title: 'MindBloom | Profile', icon: 'bi bi-person-circle' } },
   { path: '/admin', component: Admin, meta: { requiresAuth: true, requiresAdmin: true, title: 'MindBloom | Admin', icon: 'bi bi-shield-lock' } },
+  { path: '/map-explore', component: MapExplore, meta: { requiresAuth: true, title: 'MindBloom | Find Help Near Me', icon: 'bi bi-geo-alt' } },
+  { path: '/mood-walks', component: MoodWalks, meta: { requiresAuth: true, title: 'MindBloom | MoodWalks', icon: 'bi bi-signpost' } },
 ]
 
   //{
