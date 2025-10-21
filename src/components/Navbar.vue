@@ -20,7 +20,7 @@
 
       <!-- 右侧：天气徽章 + 用户信息（自适应不挤占中间区域） -->
       <div class="d-flex align-items-center gap-2 justify-content-end">
-        <WeatherBadge /> <!-- 需存在 src/components/WeatherBadge.vue，并配置好 OPENWEATHER 的 API KEY -->
+        <WeatherBadge />
 
         <div v-if="userLoaded" class="position-relative">
           <button ref="userBtn" class="user-btn d-flex align-items-center gap-2" @click="toggleUserMenu">
@@ -72,12 +72,12 @@
 <script setup>
 import { ref, computed, onMounted, onBeforeUnmount } from "vue"
 import { useRouter } from "vue-router"
-import WeatherBadge from "./WeatherBadge.vue" // 天气组件
+import WeatherBadge from "./WeatherBadge.vue"
 
 // Firebase
 import { auth, db } from "../firebase"
 import { onAuthStateChanged, signOut } from "firebase/auth"
-import { doc, getDoc } from "firebase/firestore"
+import { doc, onSnapshot } from "firebase/firestore"
 
 const router = useRouter()
 
@@ -98,26 +98,50 @@ const userData = ref({})
 const role = ref("user")
 const userLoaded = ref(false)
 
-onAuthStateChanged(auth, async (firebaseUser) => {
+// cache-busting 标记：头像 URL 改变时更新，避免浏览器缓存旧图
+const avatarBust = ref(0)
+
+let unsubscribeUserDoc = null
+
+onAuthStateChanged(auth, (firebaseUser) => {
+  // 清理旧监听
+  if (typeof unsubscribeUserDoc === "function") {
+    unsubscribeUserDoc()
+    unsubscribeUserDoc = null
+  }
+
   if (firebaseUser) {
     const docRef = doc(db, "users", firebaseUser.uid)
-    const docSnap = await getDoc(docRef)
-    if (docSnap.exists()) {
-      userData.value = docSnap.data()
-      role.value = userData.value.role || "user"
-    } else {
-      userData.value = { username: firebaseUser.email, role: "user" }
-      role.value = "user"
-    }
+    unsubscribeUserDoc = onSnapshot(
+      docRef,
+      (snap) => {
+        const beforeAvatar = userData.value?.avatar || ""
+        if (snap.exists()) {
+          userData.value = snap.data() || {}
+          role.value = userData.value.role || "user"
+        } else {
+          userData.value = { username: firebaseUser.email, role: "user" }
+          role.value = "user"
+        }
+        const afterAvatar = userData.value?.avatar || ""
+        if (afterAvatar !== beforeAvatar) {
+          avatarBust.value = Date.now()
+        }
+        userLoaded.value = true
+      },
+      () => {
+        userLoaded.value = true
+      }
+    )
   } else {
     userData.value = {}
     role.value = "user"
+    userLoaded.value = true
   }
-  userLoaded.value = true
 })
 
 const displayName = computed(() =>
-  userData.value.nickname || userData.value.username || userData.value.email || "User"
+  userData.value.username || userData.value.email || "User"
 )
 
 /** 默认头像（渐变背景 + 人形图标） */
@@ -135,11 +159,17 @@ function makeDefaultAvatar() {
   return "data:image/svg+xml;base64," + btoa(svg)
 }
 
-const avatarSrc = computed(() =>
-  userData.value.avatar && userData.value.avatar.length > 0
-    ? userData.value.avatar
-    : makeDefaultAvatar()
-)
+/** 头像地址：实时 + cache-busting */
+const avatarSrc = computed(() => {
+  const raw =
+    userData.value.avatar && userData.value.avatar.length > 0
+      ? userData.value.avatar
+      : makeDefaultAvatar()
+
+  if (raw.startsWith("data:")) return raw
+  const sep = raw.includes("?") ? "&" : "?"
+  return `${raw}${sep}v=${avatarBust.value || 0}`
+})
 
 function toggleUserMenu() {
   showUserMenu.value = !showUserMenu.value
@@ -173,7 +203,10 @@ function handleClickOutside(e) {
   }
 }
 onMounted(() => document.addEventListener("click", handleClickOutside))
-onBeforeUnmount(() => document.removeEventListener("click", handleClickOutside))
+onBeforeUnmount(() => {
+  document.removeEventListener("click", handleClickOutside)
+  if (typeof unsubscribeUserDoc === "function") unsubscribeUserDoc()
+})
 </script>
 
 <style scoped>
@@ -182,17 +215,16 @@ onBeforeUnmount(() => document.removeEventListener("click", handleClickOutside))
   display: grid !important;
   grid-template-columns: auto 1fr auto;
   column-gap: 8px;
-  min-height: 56px; /* 与原先 navbar 高度一致 */
+  min-height: 56px;
 }
 
 /* 品牌文字保持与此前一致的可读性 */
 .brand-text {
-  font-size: 1.25rem; /* ≈ Bootstrap fs-4 */
+  font-size: 1.25rem;
   line-height: 1.2;
   user-select: none;
 }
 
-/* 在窄屏时，确保品牌不会被遮挡、同时两侧可换行或压缩 */
 @media (max-width: 480px) {
   .brand-text {
     font-size: 1.125rem;
@@ -217,38 +249,22 @@ onBeforeUnmount(() => document.removeEventListener("click", handleClickOutside))
   box-shadow: 2px 0 15px rgba(0, 0, 0, 0.3);
   border-right: 1px solid rgba(255, 255, 255, 0.15);
 }
-.side-menu.open {
-  left: 0;
-}
+.side-menu.open { left: 0; }
 
-.nav {
-  list-style: none;
-  padding-left: 0;
-  margin: 0;
-}
+.nav { list-style: none; padding-left: 0; margin: 0; }
 .nav-link {
   color: #ffffff !important;
   font-weight: 500;
-  display: flex;
-  align-items: center;
-  gap: 12px;
+  display: flex; align-items: center; gap: 12px;
   padding: 14px 20px;
   transition: background-color 0.25s, transform 0.15s;
-  border-radius: 6px;
-  margin: 4px 8px;
-  text-align: left;
+  border-radius: 6px; margin: 4px 8px; text-align: left;
 }
-.nav-link:hover {
-  background-color: rgba(255, 255, 255, 0.15);
-  transform: translateX(4px);
-}
-.nav-link.active {
-  background-color: rgba(255, 255, 255, 0.25);
-}
+.nav-link:hover { background-color: rgba(255, 255, 255, 0.15); transform: translateX(4px); }
+.nav-link.active { background-color: rgba(255, 255, 255, 0.25); }
 
 .overlay {
-  position: fixed;
-  inset: 0;
+  position: fixed; inset: 0;
   background-color: rgba(0, 0, 0, 0.4);
   backdrop-filter: blur(2px);
   z-index: 1040;
@@ -256,73 +272,39 @@ onBeforeUnmount(() => document.removeEventListener("click", handleClickOutside))
 
 /* 顶栏右侧用户信息 */
 .user-btn {
-  border: none;
-  background: transparent;
-  padding: 6px 10px;
-  border-radius: 6px;
+  border: none; background: transparent;
+  padding: 6px 10px; border-radius: 6px;
   transition: background-color 0.25s;
 }
-.user-btn:hover {
-  background-color: rgba(255, 255, 255, 0.15);
-}
+.user-btn:hover { background-color: rgba(255, 255, 255, 0.15); }
 
 /* 用户下拉菜单 */
 .dropdown-menu-custom {
-  position: absolute;
-  top: 110%;
-  right: 0;
-  background: white;
-  border-radius: 6px;
+  position: absolute; top: 110%; right: 0;
+  background: white; border-radius: 6px;
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.1);
-  min-width: 160px;
-  padding: 4px;
-  z-index: 1200;
+  min-width: 160px; padding: 4px; z-index: 1200;
 }
 .dropdown-item-custom {
-  display: flex;
-  align-items: center;
-  width: 100%;
-  background: transparent;
-  border: none;
-  padding: 8px 12px;
-  text-align: left;
-  border-radius: 4px;
-  transition: background-color 0.25s;
+  display: flex; align-items: center; width: 100%;
+  background: transparent; border: none;
+  padding: 8px 12px; text-align: left;
+  border-radius: 4px; transition: background-color 0.25s;
 }
-.dropdown-item-custom:hover {
-  background-color: rgba(13, 110, 253, 0.1);
-}
+.dropdown-item-custom:hover { background-color: rgba(13, 110, 253, 0.1); }
 
 .menu-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 12px 16px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.15);
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 12px 16px; border-bottom: 1px solid rgba(255, 255, 255, 0.15);
 }
-.menu-title {
-  color: #fff;
-  font-weight: 500;
-  font-size: 1rem;
-}
+.menu-title { color: #fff; font-weight: 500; font-size: 1rem; }
 .close-btn {
-  color: #fff;
-  background: transparent;
-  border: none;
-  padding: 8px;
-  border-radius: 6px;
-  cursor: pointer;
+  color: #fff; background: transparent; border: none; padding: 8px;
+  border-radius: 6px; cursor: pointer;
   transition: background-color 0.25s, transform 0.15s;
 }
-.close-btn:hover {
-  background-color: rgba(255, 255, 255, 0.15);
-  transform: translateX(2px);
-}
-.close-btn:active {
-  background-color: rgba(255, 255, 255, 0.25);
-}
+.close-btn:hover { background-color: rgba(255, 255, 255, 0.15); transform: translateX(2px); }
+.close-btn:active { background-color: rgba(255, 255, 255, 0.25); }
 
-.cursor-pointer {
-  cursor: pointer;
-}
+.cursor-pointer { cursor: pointer; }
 </style>

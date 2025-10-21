@@ -1,40 +1,44 @@
 // src/firebase.js
-// Import the functions you need from the SDKs you need
+// --------------------------------------
+// Firebase Initialization (MindBloom)
+// --------------------------------------
+
 import { initializeApp } from "firebase/app";
 import { getAnalytics } from "firebase/analytics";
 import { getAuth } from "firebase/auth";
 import { getFirestore } from "firebase/firestore";
-import { getFunctions } from 'firebase/functions';
+import { getFunctions } from "firebase/functions";
+import { getStorage } from "firebase/storage";
 
-// Your web app's Firebase configuration
-// （你在 Firebase 控制台里生成的配置）
+// Firebase config（请保持与你控制台完全一致）
 const firebaseConfig = {
   apiKey: "AIzaSyC35u3Zk1GXP5zLVwgMxoO14_-fd4-Xf-g",
   authDomain: "mindbloom-cooh.firebaseapp.com",
   projectId: "mindbloom-cooh",
-  storageBucket: "mindbloom-cooh.firebasestorage.app",
+  // 这里修正 storageBucket：应为 *.appspot.com 而非 *.firebasestorage.app
+  storageBucket: "mindbloom-cooh.appspot.com",
   messagingSenderId: "1033018983938",
   appId: "1:1033018983938:web:e42a1a63370a35bab9891b",
-  measurementId: "G-M50VV3J2FP"
+  measurementId: "G-M50VV3J2FP",
 };
 
 // Initialize Firebase
 const app = initializeApp(firebaseConfig);
 
-// Analytics（可选，如果你需要统计的话）
+// （可选）Analytics
 const analytics = getAnalytics(app);
 
-// Firebase Authentication
+// Auth
 const auth = getAuth(app);
 
 // Firestore Database
 const db = getFirestore(app);
 
-// 导出给其它文件使用
-export { app, analytics, auth, db };
+// Cloud Functions（确保区域与你后端一致）
+const functions = getFunctions(app, "australia-southeast2");
 
-// 如果函数部署在默认区域（us-central1），下面这样即可；
-// 若你部署在其他区域，改成：getFunctions(app, 'your-region')
-// ← 导出 functions
-// 指定与你控制台一致的区域；默认 us-central1
-export const functions = getFunctions(app, 'australia-southeast2');
+// Cloud Storage（用于头像上传）
+const storage = getStorage(app, "gs://mindbloom-cooh.firebasestorage.app");
+
+// 统一导出
+export { app, analytics, auth, db, functions, storage };

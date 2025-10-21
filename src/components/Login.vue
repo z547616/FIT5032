@@ -24,7 +24,9 @@
             </div>
           </div>
 
-          <button type="submit" class="btn btn-primary w-100">Login</button>
+          <button type="submit" class="btn btn-primary w-100" :disabled="loading">
+            {{ loading ? "Logging in..." : "Login" }}
+          </button>
           <div v-if="error" class="text-danger small mt-2">{{ error }}</div>
         </form>
 
@@ -44,9 +46,10 @@ import { ref } from "vue"
 import { useRouter } from "vue-router"
 
 // Firebase
-import { auth, db } from "../firebase"
+import { auth, db, functions } from "../firebase"
 import { signInWithEmailAndPassword } from "firebase/auth"
 import { doc, getDoc } from "firebase/firestore"
+import { httpsCallable } from "firebase/functions"
 
 const router = useRouter()
 const email = ref("")
@@ -54,59 +57,56 @@ const password = ref("")
 const captcha = ref("")
 const captchaInput = ref("")
 const error = ref("")
+const loading = ref(false)
 
 function generateCaptcha() {
   captcha.value = Math.random().toString(36).substring(2, 6).toUpperCase()
 }
 generateCaptcha()
 
+async function fetchProfile(uid) {
+  const ref = doc(db, "users", uid)
+  const snap = await getDoc(ref)
+  return snap.exists() ? snap.data() : null
+}
+
 async function handleLogin() {
   error.value = ""
+  loading.value = true
 
   // 校验验证码
   if (captchaInput.value.toUpperCase() !== captcha.value) {
     error.value = "Invalid captcha"
     generateCaptcha()
+    loading.value = false
     return
   }
 
   try {
-    // Firebase Auth 登录
-    const userCredential = await signInWithEmailAndPassword(
-      auth,
-      email.value,
-      password.value
-    )
-    const user = userCredential.user
+    // 1) Auth 登录
+    const { user } = await signInWithEmailAndPassword(auth, email.value, password.value)
 
-    // Firestore 获取用户信息
-    const docRef = doc(db, "users", user.uid)
-    const docSnap = await getDoc(docRef)
+    // 2) 读 profile
+    let userData = await fetchProfile(user.uid)
 
-    if (docSnap.exists()) {
-      const userData = docSnap.data()
-      const role = userData.role || "user"
-
-      // 可选：缓存当前用户信息（供 Navbar 使用）
-      localStorage.setItem("currentUser", JSON.stringify({
-        uid: user.uid,
-        email: user.email,
-        username: userData.username,
-        role: role
-      }))
-
-      // 跳转
-      if (role === "admin") {
-        router.push("/admin")
-      } else {
-        router.push("/home")
-      }
-    } else {
-      error.value = "User profile not found in database"
+    // 3) 如果缺失，调用云端 ensureUserProfile 补建，然后再读一次
+    if (!userData) {
+      const ensure = httpsCallable(functions, "ensureUserProfile")
+      await ensure() // 无参数；基于 request.auth 识别
+      userData = await fetchProfile(user.uid)
     }
+
+    // 4) 仍然拿不到（极少数延迟/网络波动），也允许进入首页，UI 会根据 onAuthStateChanged 拉取
+    const role = userData?.role || "user"
+
+    if (role === "admin") router.push("/admin")
+    else router.push("/home")
   } catch (err) {
-    error.value = err.message
+    console.error(err)
+    error.value = err?.message || "Login failed"
     generateCaptcha()
+  } finally {
+    loading.value = false
   }
 }
 </script>

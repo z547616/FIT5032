@@ -32,6 +32,7 @@
               type="password"
               class="form-control"
               required
+              minlength="6"
             />
           </div>
 
@@ -42,6 +43,7 @@
               type="password"
               class="form-control"
               required
+              minlength="6"
             />
           </div>
 
@@ -52,6 +54,7 @@
               <option>Male</option>
               <option>Female</option>
               <option>Other</option>
+              <option>Prefer not to say</option>
             </select>
           </div>
 
@@ -66,25 +69,19 @@
             />
           </div>
 
-          <!-- 新增角色选择 -->
-          <div class="mb-3">
-            <label class="form-label">Role</label>
-            <select v-model="form.role" class="form-select" required>
-              <option value="user">User</option>
-              <option value="admin">Admin</option>
-            </select>
-          </div>
+          <button type="submit" class="btn btn-success w-100" :disabled="submitting">
+            {{ submitting ? "Registering..." : "Register" }}
+          </button>
 
-          <button type="submit" class="btn btn-success w-100">Register</button>
           <div v-if="error" class="text-danger small mt-2">{{ error }}</div>
           <div v-if="success" class="text-success small mt-2">
-            Registered successfully! Please login.
+            Registered successfully! Redirecting to login...
           </div>
         </form>
 
         <div class="text-center mt-3">
-          <small
-            >Already have an account?
+          <small>
+            Already have an account?
             <router-link to="/login">Login here</router-link>
           </small>
         </div>
@@ -101,40 +98,59 @@ import { sanitizeInput } from "../utils/sanitize.js";
 // Firebase
 import { auth, db } from "../firebase";
 import { createUserWithEmailAndPassword } from "firebase/auth";
-import { doc, setDoc } from "firebase/firestore";
+import { doc, getDoc, updateDoc, serverTimestamp } from "firebase/firestore";
 
 const router = useRouter();
+
 const form = ref({
   username: "",
   password: "",
   confirmPassword: "",
   email: "",
   gender: "",
-  age: null,
-  role: "user",
+  age: null
 });
+
 const error = ref("");
 const success = ref(false);
+const submitting = ref(false);
+
+/**
+ * 等待 Cloud Function ensureUserProfileOnSignup 创建 users/{uid}
+ * 最多重试 5 次，每次间隔 400ms
+ */
+async function waitForProfile(uid) {
+  const ref = doc(db, "users", uid);
+  for (let i = 0; i < 5; i++) {
+    const snap = await getDoc(ref);
+    if (snap.exists()) return true;
+    await new Promise(r => setTimeout(r, 400));
+  }
+  return false;
+}
 
 async function handleRegister() {
   error.value = "";
   success.value = false;
+  submitting.value = true;
 
-  // 清理输入
+  // 简单清理与校验
   form.value.username = sanitizeInput(form.value.username, 20);
   form.value.email = sanitizeInput(form.value.email, 50);
 
   if (form.value.password !== form.value.confirmPassword) {
     error.value = "Passwords do not match";
+    submitting.value = false;
     return;
   }
   if (!/^\S+@\S+\.\S+$/.test(form.value.email)) {
     error.value = "Invalid email format";
+    submitting.value = false;
     return;
   }
 
   try {
-    // Firebase Auth 创建账号
+    // 1) Auth 注册
     const userCredential = await createUserWithEmailAndPassword(
       auth,
       form.value.email,
@@ -142,21 +158,31 @@ async function handleRegister() {
     );
     const user = userCredential.user;
 
-    // Firestore 存储额外信息
-    await setDoc(doc(db, "users", user.uid), {
+    // 2) 等待后端（Cloud Function）创建 users/{uid} 并写入 createdAt、默认字段
+    const ok = await waitForProfile(user.uid);
+    if (!ok) {
+      // 即使等不到，也先继续；后面的 update 若因规则失败会抛错
+      console.warn("[Register] profile doc not detected after retries; continue to update");
+    }
+
+    // 3) 仅更新允许的业务字段 + updatedAt（遵循安全规则）
+    //    不修改 email/role/createdAt
+    await updateDoc(doc(db, "users", user.uid), {
       username: form.value.username,
-      email: form.value.email,
       gender: form.value.gender,
-      age: form.value.age,
-      role: form.value.role,
-      nickname: "",
-      avatar: "",
+      age: Number(form.value.age),
+      updatedAt: serverTimestamp()
     });
 
     success.value = true;
+
+    // 4) 跳转登录
     setTimeout(() => router.push("/login"), 1200);
   } catch (err) {
-    error.value = err.message;
+    console.error(err);
+    error.value = err?.message || "Register failed";
+  } finally {
+    submitting.value = false;
   }
 }
 </script>

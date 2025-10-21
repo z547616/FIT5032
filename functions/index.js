@@ -1,3 +1,4 @@
+/* eslint-disable max-len */
 /* eslint-disable require-jsdoc */
 /**
  * Import function triggers from their respective submodules:
@@ -27,24 +28,126 @@
 //   response.send("Hello from Firebase!");
 // });
 
-// functions/index.js
-// 运行环境：firebase-functions v4 / Node 18+
-
-// ---- Admin 初始化（v12 模块化）----
+/* ===================== Firebase Admin ===================== */
 const {initializeApp} = require("firebase-admin/app");
 const {getFirestore, FieldValue} = require("firebase-admin/firestore");
 initializeApp();
 const db = getFirestore();
 
-// ---- Functions v2 模块化 API ----
+/* ===================== Firebase Functions v2 ===================== */
+const {setGlobalOptions} = require("firebase-functions/v2");
 const {onCall} = require("firebase-functions/v2/https");
 const {onDocumentWritten} = require("firebase-functions/v2/firestore");
+// const {onUserCreated} = require("firebase-functions/v2/identity");
 const logger = require("firebase-functions/logger");
-
-// 注意：改成你控制台里一致的区域
 const REGION = "australia-southeast2";
+// const {getAuth} = require("firebase-admin/auth"); // 如果后续你想做管理员删用户，会用到
 
-/* ---------- 纯函数：规范化 notes ---------- */
+/* ===================== Firebase Functions v1（仅用于 auth 触发器） ===================== */
+const functionsV1 = require("firebase-functions/v1"); // ← 关键：从 /v1 引入
+
+/* ---- Default region for all v2 functions ---- */
+setGlobalOptions({region: "australia-southeast2"});
+
+/* ===================== Users schema helpers ===================== */
+const ALLOWED_USER_KEYS = [
+  // eslint-disable-next-line comma-spacing
+  "age","avatar","email","gender", "role","username","createdAt","updatedAt",
+];
+
+function safeString(v, dflt) {
+  return typeof v === "string" ? v : (dflt || "");
+}
+function safeNumberOrNull(v) {
+  return typeof v === "number" && isFinite(v) ? v : null;
+}
+
+/* ===================== 1) Create users/{uid} on signup (v1 auth trigger) ===================== */
+/* Writes default profile with createdAt only (frontend must write updatedAt on updates). */
+/* 说明：
+   - 这里用 v1：functions.auth.user().onCreate(...)
+   - 你的当前依赖版本肯定支持这一写法，避免 v2 onUserCreated 带来的报错
+*/
+async function createUserProfileDoc(user) {
+  if (!user) return null;
+  const uid = user.uid;
+  const email = user.email || "";
+  const usernameGuess = email ? email.split("@")[0] : uid;
+
+  const ref = db.collection("users").doc(uid);
+  const snap = await ref.get();
+  if (snap.exists) {
+    logger.info("[ensureUserProfileOnSignup] exists, skip", {uid: uid});
+    return null;
+  }
+
+  await ref.set({
+    age: null,
+    avatar: "",
+    email: email,
+    gender: "Prefer not to say",
+    role: "user",
+    username: usernameGuess,
+    createdAt: FieldValue.serverTimestamp(),
+    // updatedAt：由前端在“更新”时写入
+  });
+
+  logger.info("[ensureUserProfileOnSignup] created profile", {uid: uid});
+  return null;
+}
+
+// v1：Auth 用户创建触发器（部署到 us-central1）
+exports.ensureUserProfileOnSignup = functionsV1.auth.user().onCreate(async (user) => {
+  return createUserProfileDoc(user);
+});
+
+
+/* ===================== 2) Normalize users/{uid} on any write ===================== */
+/* - Remove disallowed keys
+   - Coerce types / default values
+   - Only patch when there are differences (avoid recursion)
+   - Do NOT touch updatedAt here (frontend + rules enforce it) */
+exports.normalizeUserProfileOnWrite = onDocumentWritten(
+    {document: "users/{uid}"},
+    async (event) => {
+      const ok = event && event.data && event.data.after && event.data.after.exists;
+      if (!ok) return null;
+
+      const snap = event.data.after;
+      const d = snap.data() || {};
+      const patch = {};
+
+      // 移除不允许字段
+      Object.keys(d).forEach((k) => {
+        if (ALLOWED_USER_KEYS.indexOf(k) === -1) {
+          patch[k] = FieldValue.delete();
+        }
+      });
+
+      // 类型/默认值修正（不改变 role 的值，只确保存在且为 string）
+      if (!("age" in d) || (d.age !== null && typeof d.age !== "number")) patch.age = safeNumberOrNull(d.age);
+      if (!("avatar" in d) || typeof d.avatar !== "string") patch.avatar = safeString(d.avatar, "");
+      if (!("email" in d) || typeof d.email !== "string") patch.email = safeString(d.email, "");
+      if (!("gender" in d) || typeof d.gender !== "string") patch.gender = safeString(d.gender, "Prefer not to say");
+      if (!("role" in d) || typeof d.role !== "string") patch.role = "user";
+      if (!("username" in d) || typeof d.username !== "string") patch.username = safeString(d.username, "");
+
+      // 双保险：缺少 createdAt 时补上
+      if (!("createdAt" in d)) patch.createdAt = FieldValue.serverTimestamp();
+
+      if (Object.keys(patch).length === 0) {
+        logger.debug("[normalizeUserProfileOnWrite] no change, skip");
+        return null;
+      }
+
+      await snap.ref.update(patch);
+      logger.info("[normalizeUserProfileOnWrite] patched", {uid: snap.id, patch: patch});
+      return null;
+    },
+);
+
+
+/* ===================== 3) Normalize notes on moodEntries write ===================== */
 function normalizeNotes(input) {
   const raw = String(input || "").trim();
   if (!raw) return "";
@@ -97,7 +200,7 @@ exports.formatMoodEntry = onDocumentWritten(
     },
 );
 
-/* ---------- 9.1: 可调用函数统计条数（原样保留） ---------- */
+/* ===================== 4) Callable: getMoodCount ===================== */
 exports.getMoodCount = onCall({region: REGION}, async (request) => {
   const auth = request && request.auth;
   if (!auth) throw new Error("unauthenticated");
@@ -117,3 +220,34 @@ exports.getMoodCount = onCall({region: REGION}, async (request) => {
   }
 });
 
+/* ===================== 5) callable: ensureUserProfile ===================== */
+exports.ensureUserProfile = onCall(async (request) => {
+  // 只能登录后调用
+  if (!request || !request.auth) {
+    throw new Error("unauthenticated");
+  }
+
+  const uid = request.auth.uid;
+  const email = (request.auth.token && request.auth.token.email) || "";
+  const usernameGuess = email ? email.split("@")[0] : uid;
+
+  const ref = db.collection("users").doc(uid);
+  const snap = await ref.get();
+
+  if (snap.exists) {
+    return {ok: true, existed: true};
+  }
+
+  // 直接以管理员权限补建（不受 Firestore 规则限制）
+  await ref.set({
+    age: null,
+    avatar: "",
+    email: email,
+    gender: "Prefer not to say",
+    role: "user",
+    username: usernameGuess,
+    createdAt: FieldValue.serverTimestamp(),
+  });
+
+  return {ok: true, existed: false};
+});
