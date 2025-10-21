@@ -3,8 +3,13 @@
     <div class="card shadow-sm border-0 rounded-4">
       <div class="card-body p-4">
         <div class="d-flex align-items-center justify-content-between mb-4">
-          <h3 class="mb-0 text-primary">Profile</h3>
+          <h3 class="mb-0 text-primary">
+            {{ isSelf ? "My Profile" : "User Profile" }}
+          </h3>
+
+          <!-- Save (self only) -->
           <button
+            v-if="isSelf"
             class="btn btn-primary"
             :disabled="saving || !isDirty"
             @click="saveProfile"
@@ -24,12 +29,13 @@
               <img
                 :src="avatarPreview || profile.avatar || defaultAvatar"
                 alt="avatar"
-                class="rounded-circle shadow-sm"
+                class="rounded-circle shadow-sm clickable"
                 width="140"
                 height="140"
                 style="object-fit: cover"
+                @click="openLightbox(profile.avatar || defaultAvatar)"
               />
-              <div class="mt-3 d-grid gap-2">
+              <div class="mt-3 d-grid gap-2" v-if="isSelf">
                 <label class="btn btn-outline-secondary mb-0">
                   <input type="file" accept="image/*" class="d-none" @change="onPickAvatar" />
                   Choose Avatar
@@ -59,13 +65,14 @@
                   class="form-control"
                   maxlength="20"
                   placeholder="Your display name"
+                  :readonly="!isSelf"
                 />
                 <div class="form-text">Max 20 chars. Letters, digits, spaces, - _ . only.</div>
               </div>
 
               <div class="col-md-6">
                 <label class="form-label fw-semibold">Gender</label>
-                <select v-model="draft.gender" class="form-select">
+                <select v-model="draft.gender" class="form-select" :disabled="!isSelf">
                   <option>Male</option>
                   <option>Female</option>
                   <option>Other</option>
@@ -82,6 +89,7 @@
                   min="1"
                   max="120"
                   placeholder="Age"
+                  :readonly="!isSelf"
                 />
               </div>
 
@@ -108,7 +116,8 @@
           </div>
         </div>
 
-        <div class="d-flex justify-content-end mt-4 gap-2">
+        <!-- Footer buttons (self only) -->
+        <div class="d-flex justify-content-end mt-4 gap-2" v-if="isSelf">
           <button class="btn btn-outline-secondary" :disabled="!isDirty || saving" @click="resetDraft">
             Reset
           </button>
@@ -121,7 +130,7 @@
   </div>
 
   <!-- Cropper dialog (vue-advanced-cropper) -->
-  <div v-if="showCropper" class="vac-backdrop">
+  <div v-if="isSelf && showCropper" class="vac-backdrop">
     <div class="vac-modal card shadow-lg">
       <div class="card-header d-flex align-items-center justify-content-between">
         <span class="fw-semibold">Crop your avatar (1:1)</span>
@@ -135,9 +144,9 @@
           :src="cropperSrc"
           :stencil-component="RectangleStencil"
           :stencil-props="{ aspectRatio: 1 }"
-          :auto-zoom="false"                
+          :auto-zoom="false"
           :transitions="false"
-          :image-restriction="'fit-area'"   
+          :image-restriction="'fit-area'"
         />
       </div>
 
@@ -148,27 +157,39 @@
       </div>
     </div>
   </div>
+
+  <!-- Lightbox for avatar preview -->
+  <div v-if="lightbox.open" class="lightbox" @click.self="closeLightbox">
+    <button class="btn btn-light btn-sm close-lightbox" @click="closeLightbox">✕</button>
+    <img :src="lightbox.src" class="lightbox-img" alt="avatar full" />
+  </div>
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onBeforeUnmount } from "vue"
+import { ref, computed, onMounted, onBeforeUnmount, watch } from "vue"
+import { useRoute } from "vue-router"
 import { onAuthStateChanged } from "firebase/auth"
 import { auth, db, storage } from "../firebase"
 import { doc, updateDoc, serverTimestamp, onSnapshot, getDoc } from "firebase/firestore"
 import { ref as sRef, uploadBytesResumable, getDownloadURL } from "firebase/storage"
 import { sanitizeInput } from "../utils/sanitize.js"
 
-// ✅ Vue3 原生裁剪组件
+// Vue Advanced Cropper
 import { Cropper, RectangleStencil } from "vue-advanced-cropper"
 import "vue-advanced-cropper/dist/style.css"
 
 /* ---------- state ---------- */
+const route = useRoute()
+
+const meUid = ref(null)          // 当前登录用户
+const viewingUid = ref(null)     // 正在查看的用户（可为他人）
+const isSelf = computed(() => meUid.value && viewingUid.value === meUid.value)
+
 const profile = ref({
   email: "", role: "user", username: "", gender: "Prefer not to say",
   age: null, avatar: "", createdAt: null, updatedAt: null
 })
 const draft = ref({ username: "", gender: "Prefer not to say", age: null })
-const uid = ref(null)
 const saving = ref(false)
 const uploading = ref(false)
 const uploadProgress = ref(0)
@@ -185,7 +206,7 @@ const cropping = ref(false)
 
 let unsubscribeUserDoc = null
 
-/* ---------- default avatar ---------- */
+/* ---------- default avatar (ASCII-only to keep btoa safe) ---------- */
 const defaultAvatar = `data:image/svg+xml;base64,${btoa(`
 <svg xmlns='http://www.w3.org/2000/svg' width='128' height='128' viewBox='0 0 128 128'>
   <defs><linearGradient id='g' x1='0' y1='0' x2='1' y2='1'>
@@ -219,6 +240,7 @@ const avatarChanged = computed(() =>
   (!!avatarPreview.value && avatarPreview.value !== profile.value.avatar)
 )
 const isDirty = computed(() => {
+  if (!isSelf.value) return false
   const nameChanged = cleanUsername(draft.value.username) !== (profile.value.username || "")
   const genderChanged = (draft.value.gender || "") !== (profile.value.gender || "Prefer not to say")
   const ageChanged = (clampAge(draft.value.age) ?? null) !== (profile.value.age ?? null)
@@ -241,12 +263,14 @@ function startUserDocListener(userId) {
         age: typeof d.age === "number" ? d.age : null,
         avatar: d.avatar || "", createdAt: d.createdAt || null, updatedAt: d.updatedAt || null
       }
-      if (!saving.value) {
+      // 仅在自己查看且非保存过程中同步草稿
+      if (isSelf.value && !saving.value) {
         draft.value.username = profile.value.username
         draft.value.gender = profile.value.gender
         draft.value.age = profile.value.age
       }
-      if (!saving.value && avatarPreview.value && d.avatar === avatarPreview.value) {
+      // 如果刚上传的预览已被后端文档采纳，清空预览
+      if (avatarPreview.value && d.avatar === avatarPreview.value) {
         avatarPreview.value = ""
       }
     }
@@ -259,15 +283,46 @@ function stopUserDocListener() {
   }
 }
 
-/* ---------- avatar select / crop ---------- */
+/* ---------- resolve viewing uid ---------- */
+async function resolveViewingUidAndLoad() {
+  // 优先 ?uid=，否则自己的 uid
+  const q = typeof route.query.uid === "string" && route.query.uid.trim()
+    ? route.query.uid
+    : meUid.value
+  if (!q) return
+  viewingUid.value = q
+
+  // 初始加载一次数据（便于更快显示），随后开启订阅
+  try {
+    const snap = await getDoc(doc(db, "users", q))
+    if (snap.exists()) {
+      const d = snap.data()
+      profile.value = {
+        email: d.email || "", role: d.role || "user",
+        username: d.username || "", gender: d.gender || "Prefer not to say",
+        age: typeof d.age === "number" ? d.age : null,
+        avatar: d.avatar || "", createdAt: d.createdAt || null, updatedAt: d.updatedAt || null
+      }
+      if (isSelf.value) {
+        draft.value.username = profile.value.username
+        draft.value.gender = profile.value.gender
+        draft.value.age = profile.value.age
+      }
+    }
+  } catch {}
+  startUserDocListener(q)
+}
+
+/* ---------- avatar select / crop (self only) ---------- */
 function onPickAvatar(e) {
+  if (!isSelf.value) return
   const file = e.target?.files?.[0]
   if (!file) return
   error.value = ""; success.value = ""
 
   if (!file.type.startsWith("image/")) { error.value = "Please choose an image file."; return }
   if (file.size > 10 * 1024 * 1024) { error.value = "Image is too large (max 10MB)."; return }
-  if (!auth.currentUser?.uid || !uid.value) { error.value = "Not signed in."; return }
+  if (!meUid.value) { error.value = "Not signed in."; return }
 
   if (cropperSrc.value) URL.revokeObjectURL(cropperSrc.value)
   cropperSrc.value = URL.createObjectURL(file)
@@ -283,7 +338,7 @@ function cancelCrop() {
 }
 
 async function confirmCrop() {
-  if (!cropperRef.value) return
+  if (!isSelf.value || !cropperRef.value) return
   cropping.value = true
   try {
     const result = cropperRef.value.getResult()
@@ -293,7 +348,7 @@ async function confirmCrop() {
     const blob = await new Promise((res) => canvas.toBlob(res, "image/jpeg", 0.92))
     if (!blob) throw new Error("Blob creation failed.")
 
-    const path = `avatars/${uid.value}/avatar.jpg`
+    const path = `avatars/${meUid.value}/avatar.jpg`
     const storageRef = sRef(storage, path)
     const task = uploadBytesResumable(storageRef, blob, {
       contentType: "image/jpeg",
@@ -312,9 +367,18 @@ async function confirmCrop() {
     })
 
     const url = await getDownloadURL(task.snapshot.ref)
-    avatarPreview.value = url
+
+    // ✅ 立即写回 Firestore，让 Navbar / 其它订阅立刻更新
+    await updateDoc(doc(db, "users", meUid.value), {
+      avatar: url,
+      updatedAt: serverTimestamp(),
+    })
+
+    // 本地也先用新地址
+    profile.value.avatar = url
+    avatarPreview.value = ""
     avatarRemoved.value = false
-    success.value = "Avatar cropped & uploaded. Click Save to apply."
+    success.value = "Avatar updated."
   } catch (err) {
     console.error("[crop/upload] error:", err)
     error.value = err?.message || "Upload failed."
@@ -327,12 +391,14 @@ async function confirmCrop() {
 
 /* ---------- remove & save ---------- */
 function removeAvatar() {
+  if (!isSelf.value) return
   avatarPreview.value = ""
   avatarRemoved.value = true
 }
 async function saveProfile() {
+  if (!isSelf.value) return
   error.value = ""; success.value = ""
-  if (!uid.value) { error.value = "Not signed in."; return }
+  if (!meUid.value) { error.value = "Not signed in."; return }
 
   const patch = {}
   const cleanedName = cleanUsername(draft.value.username)
@@ -353,9 +419,12 @@ async function saveProfile() {
   patch.updatedAt = serverTimestamp()
   saving.value = true
   try {
-    await updateDoc(doc(db, "users", uid.value), patch)
-    profile.value.updatedAt = new Date() // 乐观展示
+    await updateDoc(doc(db, "users", meUid.value), patch)
+    profile.value.updatedAt = new Date() // optimistic
     success.value = "Profile updated."
+    // 如果保存时带了 avatarPreview，则清空它
+    if (patch.avatar) avatarPreview.value = ""
+    avatarRemoved.value = false
   } catch (e) {
     console.error(e)
     error.value = e?.message || "Failed to update profile."
@@ -365,6 +434,7 @@ async function saveProfile() {
 }
 
 function resetDraft() {
+  if (!isSelf.value) return
   draft.value.username = profile.value.username
   draft.value.gender = profile.value.gender
   draft.value.age = profile.value.age
@@ -374,35 +444,38 @@ function resetDraft() {
   error.value = ""
 }
 
-/* ---------- auth ---------- */
+/* ---------- auth & route ---------- */
 onMounted(() => {
   onAuthStateChanged(auth, async (user) => {
     stopUserDocListener()
-    if (!user) { uid.value = null; error.value = "Please login first."; return }
-    uid.value = user.uid
-    try {
-      const snap = await getDoc(doc(db, "users", uid.value))
-      if (snap.exists()) {
-        const d = snap.data()
-        profile.value = {
-          email: d.email || "", role: d.role || "user", username: d.username || "",
-          gender: d.gender || "Prefer not to say", age: typeof d.age === "number" ? d.age : null,
-          avatar: d.avatar || "", createdAt: d.createdAt || null, updatedAt: d.updatedAt || null
-        }
-        draft.value.username = profile.value.username
-        draft.value.gender = profile.value.gender
-        draft.value.age = profile.value.age
-      }
-    } catch {}
-    startUserDocListener(uid.value)
+    meUid.value = user ? user.uid : null
+    await resolveViewingUidAndLoad()
   })
 })
+
+// 当 ?uid= 变化时，切换查看对象
+watch(() => route.query.uid, async () => {
+  await resolveViewingUidAndLoad()
+})
+
 onBeforeUnmount(() => {
   stopUserDocListener()
 })
+
+/* ---------- Lightbox ---------- */
+const lightbox = ref({ open: false, src: "" })
+function openLightbox(src) {
+  lightbox.value = { open: true, src }
+}
+function closeLightbox() {
+  lightbox.value = { open: false, src: "" }
+}
 </script>
 
 <style scoped>
+.clickable { cursor: pointer; transition: opacity .2s ease }
+.clickable:hover { opacity: 0.85 }
+
 /* 裁剪弹窗：遮罩半透明；内容白底居中 */
 .vac-backdrop{
   position: fixed; inset: 0; z-index: 3000;
@@ -426,8 +499,31 @@ onBeforeUnmount(() => {
 /* 裁剪区域：初始完整显示图片（fit-area），由组件处理缩放 */
 .vac-cropper{
   width: 100%;
-  height: 60vh;     /* 可按需调整高度 */
+  height: 60vh;
   border-radius: 8px;
-  background: #111; /* 深色背景便于观察 */
+  background: #111;
+}
+
+/* Lightbox */
+.lightbox {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.7);
+  display: grid;
+  place-items: center;
+  z-index: 3500;
+  backdrop-filter: blur(2px);
+}
+.lightbox-img {
+  max-width: 90vw;
+  max-height: 90vh;
+  border-radius: 10px;
+  background: #fff;
+  box-shadow: 0 10px 30px rgba(0,0,0,.4);
+}
+.close-lightbox {
+  position: absolute;
+  top: 16px;
+  right: 16px;
 }
 </style>

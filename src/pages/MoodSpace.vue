@@ -1,6 +1,6 @@
 <template>
   <div class="container py-4" style="max-width: 900px">
-    <!-- 标题 + 右上角发帖按钮 -->
+    <!-- Header: title + total + compose toggle -->
     <div class="d-flex align-items-center justify-content-between mb-3">
       <h2 class="text-primary m-0 d-flex align-items-center gap-2">
         💬 Mood Space
@@ -19,7 +19,7 @@
       </button>
     </div>
 
-    <!-- 发帖框（可折叠） -->
+    <!-- Composer (collapsible) -->
     <transition name="fade">
       <div v-if="me && showComposer" class="card shadow-sm border-0 mb-4">
         <div class="card-body">
@@ -42,7 +42,6 @@
                 maxlength="500"
               ></textarea>
 
-              <!-- 选择图片 -->
               <div class="d-flex align-items-center gap-2 mb-3">
                 <input
                   ref="fileInput"
@@ -55,7 +54,7 @@
                 <small class="text-muted">Up to 4 images (max 5MB each)</small>
               </div>
 
-              <!-- 正方形预览网格（仅显示，不裁切） -->
+              <!-- Square preview grid (display only, not cropping) -->
               <div v-if="previews.length" class="square-grid mb-2">
                 <div v-for="(p, idx) in previews" :key="idx" class="square-cell">
                   <img :src="p.src" class="square-img rounded" alt="preview"/>
@@ -86,27 +85,32 @@
       </div>
     </transition>
 
-    <!-- 帖子列表 -->
+    <!-- Posts -->
     <div v-for="post in posts" :key="post.id" class="card border-0 shadow-sm rounded-4 mb-3">
       <div class="card-body">
         <div class="d-flex gap-3">
+          <!-- Clickable avatar -->
           <img
             :src="post.avatar || defaultAvatar"
-            class="rounded-circle"
+            class="rounded-circle clickable"
             width="50"
             height="50"
             style="object-fit: cover"
             alt="avatar"
+            @click="goToProfile(post.uid)"
           />
           <div class="flex-grow-1">
             <div class="d-flex justify-content-between align-items-center mb-1">
-              <h6 class="mb-0 fw-semibold">{{ post.username }}</h6>
+              <!-- Clickable username -->
+              <h6 class="mb-0 fw-semibold text-primary clickable" @click="goToProfile(post.uid)">
+                {{ post.username }}
+              </h6>
               <small class="text-muted">{{ formatTime(post.createdAt) }}</small>
             </div>
 
             <p class="mb-2" v-if="post.text">{{ post.text }}</p>
 
-            <!-- 帖子图片：正方形缩略图网格，点击弹出原图 -->
+            <!-- Post images: square thumbs, click to view original -->
             <div v-if="(post.images?.length || 0) > 0" class="square-grid mb-2">
               <div
                 v-for="(img, i) in post.images"
@@ -118,7 +122,7 @@
               </div>
             </div>
 
-            <!-- 操作区 -->
+            <!-- Actions -->
             <div class="d-flex align-items-center gap-3">
               <button
                 class="btn btn-sm"
@@ -158,9 +162,9 @@
               </button>
             </div>
 
-            <!-- 评论区 -->
+            <!-- Comments -->
             <div class="mt-3">
-              <!-- 新评论输入 -->
+              <!-- new comment -->
               <div v-if="me && commentInputOpen[post.id]" class="d-flex align-items-start gap-2 mb-2">
                 <img
                   :src="me.avatar || defaultAvatar"
@@ -181,7 +185,7 @@
                 <button class="btn btn-sm btn-primary" @click="submitComment(post.id)">Send</button>
               </div>
 
-              <!-- 评论列表 -->
+              <!-- list -->
               <div v-if="(comments[post.id]?.length || 0) > 0">
                 <div
                   v-for="c in comments[post.id]"
@@ -199,7 +203,7 @@
                   <div class="flex-grow-1">
                     <div class="d-flex justify-content-between">
                       <div>
-                        <strong class="me-2">{{ c.username }}</strong>
+                        <strong class="me-2 clickable text-primary" @click="goToProfile(c.uid)">{{ c.username }}</strong>
                         <small class="text-muted">{{ formatTime(c.createdAt) }}</small>
                       </div>
                       <button
@@ -217,7 +221,7 @@
 
               <div v-else class="text-muted small">No comments yet.</div>
             </div>
-            <!-- /评论区 -->
+            <!-- /Comments -->
           </div>
         </div>
       </div>
@@ -227,17 +231,13 @@
       No posts yet. Share your mood! 🌱
     </div>
 
-    <!-- 原图预览 Lightbox -->
+    <!-- Lightbox -->
     <div v-if="lightbox.open" class="lightbox" @click.self="closeLightbox">
       <button class="btn btn-light btn-sm close-lightbox" @click="closeLightbox" title="Close">✕</button>
       <img :src="lightbox.images[lightbox.index]?.url" class="lightbox-img" alt="full"/>
       <div class="lightbox-nav">
-        <button class="btn btn-light btn-sm" @click.stop="prevLightbox" :disabled="lightbox.index <= 0">
-          ‹
-        </button>
-        <button class="btn btn-light btn-sm" @click.stop="nextLightbox" :disabled="lightbox.index >= lightbox.images.length - 1">
-          ›
-        </button>
+        <button class="btn btn-light btn-sm" @click.stop="prevLightbox" :disabled="lightbox.index <= 0">‹</button>
+        <button class="btn btn-light btn-sm" @click.stop="nextLightbox" :disabled="lightbox.index >= lightbox.images.length - 1">›</button>
       </div>
     </div>
   </div>
@@ -245,6 +245,7 @@
 
 <script setup>
 import { ref, computed, onMounted, onBeforeUnmount } from "vue"
+import { useRouter } from "vue-router"
 import { auth, db, storage, functions } from "../firebase"
 import { onAuthStateChanged } from "firebase/auth"
 import {
@@ -254,7 +255,8 @@ import {
 import { httpsCallable } from "firebase/functions"
 import { ref as sRef, uploadBytesResumable, getDownloadURL } from "firebase/storage"
 
-/* ---------- 用户 & 列表 ---------- */
+/* user & list */
+const router = useRouter()
 const me = ref(null)
 const posts = ref([])
 const totalPosts = ref(null)
@@ -262,14 +264,14 @@ const newPost = ref("")
 const loading = ref(false)
 let unsubscribePosts = null
 
-/* ---------- 发帖框显示/隐藏 ---------- */
+/* composer toggle */
 const showComposer = ref(false)
 function toggleComposer() { showComposer.value = !showComposer.value }
 
-/* ---------- 选择图片 & 预览（正方形显示） ---------- */
+/* images preview */
 const fileInput = ref(null)
-const previews = ref([])            // [{ file, src }]
-const uploadProgress = ref([])      // [0..100] per image
+const previews = ref([])       // [{ file, src }]
+const uploadProgress = ref([]) // [0..100]
 
 function onPickImages(e) {
   const files = Array.from(e.target.files || [])
@@ -281,7 +283,7 @@ function onPickImages(e) {
     previews.value.push({ file, src })
     uploadProgress.value.push(null)
   })
-  e.target.value = "" // 允许重复选择同一文件
+  e.target.value = ""
 }
 function removePreview(index) {
   const [p] = previews.value.splice(index, 1)
@@ -292,18 +294,18 @@ const postingDisabled = computed(() =>
   loading.value || (!newPost.value.trim() && previews.value.length === 0)
 )
 
-/* ---------- 点赞 ---------- */
+/* like state */
 const likedSet = ref(new Set())
 const likeBusy = ref(new Set())
 
-/* ---------- 评论 ---------- */
-const expandedPosts = ref(new Set())    // expanded -> full；否则 compact（最新2条）
-const comments = ref({})                // { [pid]: Array<Comment> } (desc)
-const commentInputOpen = ref({})        // { [pid]: boolean }
-const commentDraft = ref({})            // { [pid]: string }
-const commentSubs = {}                  // { [pid]: { unsub, mode: 'compact'|'full' } }
+/* comments */
+const expandedPosts = ref(new Set())
+const comments = ref({})
+const commentInputOpen = ref({})
+const commentDraft = ref({})
+const commentSubs = {}
 
-/* ---------- 默认头像 ---------- */
+/* default avatar */
 function svgDataUri(svg) { return "data:image/svg+xml;utf8," + encodeURIComponent(svg) }
 const defaultAvatar = svgDataUri(`
 <svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128">
@@ -314,29 +316,42 @@ const defaultAvatar = svgDataUri(`
 </svg>
 `)
 
-/* ---------- 工具 ---------- */
+/* utils */
 function formatTime(ts) {
   if (!ts) return ""
   const d = ts?.toDate ? ts.toDate() : new Date(ts)
   return d.toLocaleString()
 }
 
-/* ---------- 当前用户 ---------- */
+/* routing to profile */
+function goToProfile(uid) {
+  if (!uid) return
+  if (me.value && uid === me.value.uid) router.push("/profile")
+  else router.push(`/profile?uid=${uid}`)
+}
+
+/* auth */
 onAuthStateChanged(auth, async (u) => {
-  if (!u) { me.value = null; likedSet.value = new Set(); return }
+  if (!u) {
+    me.value = null
+    likedSet.value = new Set()
+    return
+  }
   const snap = await getDoc(doc(db, "users", u.uid))
   const data = snap.exists() ? snap.data() : {}
   me.value = { uid: u.uid, username: data.username || "User", avatar: data.avatar || "" }
+
+  // ensure like state on first load
+  await refreshLikedPosts()
 })
 
-/* ---------- 发帖（含图片） ---------- */
+/* submit post */
 async function submitPost() {
   if (!me.value) return
   if (!newPost.value.trim() && previews.value.length === 0) return
   loading.value = true
 
   try {
-    // 1) 先创建空帖子（images=[]），拿到 postId
     const docRef = await addDoc(collection(db, "posts"), {
       uid: me.value.uid,
       username: me.value.username,
@@ -349,7 +364,6 @@ async function submitPost() {
     })
     const pid = docRef.id
 
-    // 2) 逐张上传
     const uploaded = []
     for (let i = 0; i < previews.value.length; i++) {
       const file = previews.value[i].file
@@ -370,7 +384,6 @@ async function submitPost() {
       })
     }
 
-    // 3) 回写 images（有图片时）
     if (uploaded.length) {
       await updateDoc(doc(db, "posts", pid), {
         images: uploaded,
@@ -378,7 +391,6 @@ async function submitPost() {
       })
     }
 
-    // 清理状态
     newPost.value = ""
     previews.value.forEach(p => p.src && URL.revokeObjectURL(p.src))
     previews.value = []
@@ -392,7 +404,7 @@ async function submitPost() {
   }
 }
 
-/* ---------- 点赞/撤销 ---------- */
+/* like / unlike */
 async function toggleLike(post) {
   if (!me.value) return
   const pid = post.id
@@ -412,7 +424,7 @@ async function toggleLike(post) {
   } finally { likeBusy.value.delete(pid) }
 }
 
-/* ---------- 评论 ---------- */
+/* comments */
 function ensureCommentSub(pid, mode) {
   if (commentSubs[pid]?.mode === mode) return
   if (commentSubs[pid]?.unsub) { commentSubs[pid].unsub(); delete commentSubs[pid] }
@@ -420,7 +432,7 @@ function ensureCommentSub(pid, mode) {
   const base = collection(db, "posts", pid, "comments")
   const q = mode === "full"
     ? query(base, orderBy("createdAt", "desc"))
-    : query(base, orderBy("createdAt", "desc"), limit(2)) // 最新两条
+    : query(base, orderBy("createdAt", "desc"), limit(2))
 
   const unsub = onSnapshot(q, (snap) => {
     comments.value[pid] = snap.docs.map(d => ({ id: d.id, ...d.data() }))
@@ -461,7 +473,7 @@ async function deletePost(pid) {
   if (commentSubs[pid]?.unsub) { commentSubs[pid].unsub(); delete commentSubs[pid] }
 }
 
-/* ---------- 统计 ---------- */
+/* counts */
 async function fetchPostCount() {
   try {
     const res = await httpsCallable(functions, "getPostCount")()
@@ -469,27 +481,17 @@ async function fetchPostCount() {
   } catch { totalPosts.value = 0 }
 }
 
-/* ---------- 订阅帖子 ---------- */
+/* subscribe posts */
 onMounted(() => {
   const qPosts = query(collection(db, "posts"), orderBy("createdAt", "desc"))
   unsubscribePosts = onSnapshot(qPosts, async (snap) => {
     const list = snap.docs.map(d => ({ id: d.id, ...d.data() }))
     posts.value = list
 
-    // 同步点赞状态
-    if (me.value) {
-      const set = new Set(likedSet.value)
-      await Promise.all(list.map(async (p) => {
-        if (set.has(p.id)) return
-        try {
-          const likeDoc = await getDoc(doc(db, "posts", p.id, "likes", me.value.uid))
-          if (likeDoc.exists()) set.add(p.id)
-        } catch {}
-      }))
-      likedSet.value = set
-    }
+    // like state: refresh whenever posts list changes (and user is ready)
+    if (me.value) await refreshLikedPosts()
 
-    // 评论订阅
+    // comments subscriptions
     const currentIds = new Set(list.map(p => p.id))
     Object.keys(commentSubs).forEach(pid => {
       if (!currentIds.has(pid)) {
@@ -516,7 +518,21 @@ onBeforeUnmount(() => {
   Object.values(commentSubs).forEach(({unsub}) => unsub && unsub())
 })
 
-/* ---------- Lightbox ---------- */
+/* like state refresh */
+async function refreshLikedPosts() {
+  if (!me.value) return
+  const list = posts.value
+  const set = new Set()
+  await Promise.all(list.map(async (p) => {
+    try {
+      const likeDoc = await getDoc(doc(db, "posts", p.id, "likes", me.value.uid))
+      if (likeDoc.exists()) set.add(p.id)
+    } catch {}
+  }))
+  likedSet.value = set
+}
+
+/* lightbox */
 const lightbox = ref({ open: false, images: [], index: 0 })
 function openLightbox(images, index) {
   lightbox.value = { open: true, images, index }
@@ -535,11 +551,15 @@ function nextLightbox() {
 </script>
 
 <style scoped>
-/* 发帖框显隐动画 */
+/* fade for composer */
 .fade-enter-active, .fade-leave-active { transition: opacity .2s ease }
 .fade-enter-from, .fade-leave-to { opacity: 0 }
 
-/* 统一正方形显示（仅显示，不裁切） */
+/* clickable */
+.clickable { cursor: pointer; transition: opacity .2s ease }
+.clickable:hover { opacity: 0.8 }
+
+/* square thumbs (display only, keep aspect) */
 .square-grid {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
@@ -548,8 +568,8 @@ function nextLightbox() {
 .square-cell {
   position: relative;
   width: 100%;
-  aspect-ratio: 1 / 1;   /* 正方形 */
-  background: #f4f6f8;   /* 淡背景，便于视觉统一 */
+  aspect-ratio: 1 / 1;
+  background: #f4f6f8;
   border-radius: 8px;
   display: grid;
   place-items: center;
@@ -559,7 +579,7 @@ function nextLightbox() {
 .square-img {
   max-width: 100%;
   max-height: 100%;
-  object-fit: contain;   /* 等比缩放完整展示 */
+  object-fit: contain;
   display: block;
 }
 .remove-btn {
@@ -571,7 +591,7 @@ function nextLightbox() {
   border-radius: 999px;
 }
 
-/* Lightbox：全屏原图预览 */
+/* lightbox */
 .lightbox {
   position: fixed;
   inset: 0;
