@@ -84,7 +84,7 @@ const router = useRouter()
 const navItems = [
   { label: "Home", icon: "bi bi-house-door", path: "/home" },
   { label: "Mood Tracker", icon: "bi bi-emoji-smile", path: "/mood-tracker" },
-  { label: "Anonymous Stories", icon: "bi bi-chat-dots", path: "/anonymous-stories" },
+  { label: "Mood Space", icon: "bi bi-chat-heart", path: "/mood-space" },
   { label: "Resources", icon: "bi bi-book", path: "#" },
   { label: "Community & Support", icon: "bi bi-people", path: "#" },
   { label: "Get Help", icon: "bi bi-life-preserver", path: "#" },

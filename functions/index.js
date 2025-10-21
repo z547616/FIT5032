@@ -32,12 +32,13 @@
 const {initializeApp} = require("firebase-admin/app");
 const {getFirestore, FieldValue} = require("firebase-admin/firestore");
 initializeApp();
+const {getStorage} = require("firebase-admin/storage");
 const db = getFirestore();
 
 /* ===================== Firebase Functions v2 ===================== */
+const {onDocumentCreated, onDocumentDeleted, onDocumentWritten} = require("firebase-functions/v2/firestore");
 const {setGlobalOptions} = require("firebase-functions/v2");
 const {onCall} = require("firebase-functions/v2/https");
-const {onDocumentWritten} = require("firebase-functions/v2/firestore");
 // const {onUserCreated} = require("firebase-functions/v2/identity");
 const logger = require("firebase-functions/logger");
 const REGION = "australia-southeast2";
@@ -251,3 +252,128 @@ exports.ensureUserProfile = onCall(async (request) => {
 
   return {ok: true, existed: false};
 });
+
+exports.syncPostUpdatedAt = onDocumentWritten(
+    {
+      region: REGION,
+      document: "posts/{postId}",
+    },
+    async (event) => {
+      const after = event && event.data && event.data.after;
+      if (!after || !after.exists) return null;
+
+      const data = after.data();
+      const ref = after.ref;
+
+      // 如果没有 updatedAt，则添加
+      if (!data.updatedAt) {
+        await ref.update({updatedAt: FieldValue.serverTimestamp()});
+      }
+      return null;
+    },
+);
+
+// 统计全站 posts 数量（允许未登录调用）
+exports.getPostCount = onCall({region: REGION}, async (request) => {
+  const col = db.collection("posts");
+  try {
+    // 优先使用 Firestore 聚合计数（计费更低、速度更快）
+    const agg = await col.count().get();
+    const count = agg.data().count || 0;
+    logger.info("[getPostCount] count()", count);
+    return {count};
+  } catch (e) {
+    logger.warn("[getPostCount] count() failed, fallback to get()", e);
+    // 兜底：直接拉取（大数据量时会更慢、更贵，但保证可用）
+    const snap = await col.get();
+    return {count: snap.size};
+  }
+});
+
+/* posts 初次写入后若缺失计数字段，填上默认值（稳健性） */
+exports.ensurePostCounters = onDocumentWritten(
+    {region: REGION, document: "posts/{postId}"},
+    async (event) => {
+      const after = event && event.data && event.data.after;
+      if (!after || !after.exists) return null;
+      const data = after.data();
+      const patch = {};
+      if (typeof data.likeCount !== "number") patch.likeCount = 0;
+      if (typeof data.commentCount !== "number") patch.commentCount = 0;
+      if (!data.updatedAt) patch.updatedAt = FieldValue.serverTimestamp();
+      if (Object.keys(patch).length) {
+        await after.ref.update(patch);
+      }
+      return null;
+    },
+);
+
+/* 点赞 +1 */
+exports.onLikeCreated = onDocumentCreated(
+    {region: REGION, document: "posts/{postId}/likes/{uid}"},
+    async (event) => {
+      const postId = event.params.postId;
+      await getFirestore().collection("posts").doc(postId).update({
+        likeCount: FieldValue.increment(1),
+        updatedAt: FieldValue.serverTimestamp(),
+      });
+      return null;
+    },
+);
+
+/* 取消点赞 -1 */
+exports.onLikeDeleted = onDocumentDeleted(
+    {region: REGION, document: "posts/{postId}/likes/{uid}"},
+    async (event) => {
+      const postId = event.params.postId;
+      await getFirestore().collection("posts").doc(postId).update({
+        likeCount: FieldValue.increment(-1),
+        updatedAt: FieldValue.serverTimestamp(),
+      });
+      return null;
+    },
+);
+
+/* 评论 +1 */
+exports.onCommentCreated = onDocumentCreated(
+    {region: REGION, document: "posts/{postId}/comments/{commentId}"},
+    async (event) => {
+      const postId = event.params.postId;
+      await getFirestore().collection("posts").doc(postId).update({
+        commentCount: FieldValue.increment(1),
+        updatedAt: FieldValue.serverTimestamp(),
+      });
+      return null;
+    },
+);
+
+/* 删除评论 -1 */
+exports.onCommentDeleted = onDocumentDeleted(
+    {region: REGION, document: "posts/{postId}/comments/{commentId}"},
+    async (event) => {
+      const postId = event.params.postId;
+      await getFirestore().collection("posts").doc(postId).update({
+        commentCount: FieldValue.increment(-1),
+        updatedAt: FieldValue.serverTimestamp(),
+      });
+      return null;
+    },
+);
+
+// 删除帖子时，清理 Storage 里 posts/{uid}/{postId}/ 前缀下的所有文件
+exports.cleanupPostImages = onDocumentDeleted(
+    {region: REGION, document: "posts/{postId}"},
+    async (event) => {
+      const data = event.data && event.data.data();
+      if (!data) return null;
+      const uid = data.uid;
+      const postId = event.params.postId;
+      if (!uid || !postId) return null;
+
+      const bucket = getStorage().bucket();
+      const prefix = `posts/${uid}/${postId}/`;
+      await bucket.deleteFiles({prefix}); // 递归删除此前缀下所有文件
+      return null;
+    },
+);
+

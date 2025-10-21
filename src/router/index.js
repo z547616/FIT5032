@@ -5,7 +5,7 @@ import Profile from '../pages/Profile.vue'
 import Login from '../components/Login.vue'
 import Register from '../components/Register.vue'
 import Admin from '../pages/Admin.vue'
-import AnonymousStories from '../pages/AnonymousStories.vue'
+import MoodSpace from '../pages/MoodSpace.vue'
 
 // Firebase
 import { getAuth, onAuthStateChanged } from "firebase/auth"
@@ -20,16 +20,17 @@ const routes = [
   { path: '/register', component: Register, meta: { title: 'MindBloom | Register', icon: 'bi bi-person-plus' } },
   { path: '/home', component: Home, meta: { requiresAuth: true, title: 'MindBloom | Home', icon: 'bi bi-house-door' } },
   { path: '/mood-tracker', component: MoodTracker, meta: { requiresAuth: true, title: 'MindBloom | Mood Tracker', icon: 'bi bi-emoji-smile' } },
-  { path: '/anonymous-stories', component: AnonymousStories, meta: { requiresAuth: true, title: 'MindBloom | Anonymous Stories', icon: 'bi bi-chat-dots' } },
+  { path: '/mood-space', component: MoodSpace, meta: { requiresAuth: true, title: 'MindBloom | Mood Space', icon: 'bi bi-chat-heart' } },
   { path: '/profile', component: Profile, meta: { requiresAuth: true, title: 'MindBloom | Profile', icon: 'bi bi-person-circle' } },
   { path: '/admin', component: Admin, meta: { requiresAuth: true, requiresAdmin: true, title: 'MindBloom | Admin', icon: 'bi bi-shield-lock' } },
-   {
-    path: '/get-all-mood',
-    // 如果你已手动 import 了组件，可改为：component: GetAllMood,
-    component: () => import('../pages/GetAllMood.vue'),
-    meta: { requiresAuth: true, title: 'MindBloom | GetAllMood (JSON)', icon: 'bi bi-code' }
-  },
 ]
+
+  //{
+  //   path: '/get-all-mood',
+  //   // 如果你已手动 import 了组件，可改为：component: GetAllMood,
+  //   component: () => import('../pages/GetAllMood.vue'),
+  //   meta: { requiresAuth: true, title: 'MindBloom | GetAllMood (JSON)', icon: 'bi bi-code' }
+  // },
 
 const router = createRouter({
   history: createWebHistory(),

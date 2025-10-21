@@ -1,9 +1,10 @@
 <template>
   <div class="bg-light min-vh-100 py-5">
     <div class="container">
-      <h1 class="text-center display-5 fw-bold text-primary mb-5">
+      <!-- <h1 class="text-center display-5 fw-bold text-primary mb-5">
         Mood Tracker
-      </h1>
+      </h1> -->
+      <h2 class="text-primary text-center mb-4">Mood Tracker</h2>
 
       <div class="row g-4">
         <!-- Form -->

@@ -15,8 +15,7 @@ const firebaseConfig = {
   apiKey: "AIzaSyC35u3Zk1GXP5zLVwgMxoO14_-fd4-Xf-g",
   authDomain: "mindbloom-cooh.firebaseapp.com",
   projectId: "mindbloom-cooh",
-  // 这里修正 storageBucket：应为 *.appspot.com 而非 *.firebasestorage.app
-  storageBucket: "mindbloom-cooh.appspot.com",
+  storageBucket: "mindbloom-cooh.firebasestorage.app",
   messagingSenderId: "1033018983938",
   appId: "1:1033018983938:web:e42a1a63370a35bab9891b",
   measurementId: "G-M50VV3J2FP",
