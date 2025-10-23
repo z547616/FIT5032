@@ -124,7 +124,7 @@
 
 <script setup>
 import jsPDF from 'jspdf'
-import autoTable from 'jspdf-autotable'   // ✅ 正确引入为函数，而非 side-effect
+import autoTable from 'jspdf-autotable'
 import { ref, watch, onMounted, computed } from 'vue'
 import { db } from '../../firebase'
 import {
@@ -158,12 +158,6 @@ function fmt(ts) {
     const d = ts?.toDate ? ts.toDate() : new Date(ts)
     return d.toLocaleString()
 }
-function prefixBounds(s) {
-    if (!s) return null
-    const start = s
-    const end = s + '\uf8ff'
-    return [start, end]
-}
 
 /* 查询与分页 */
 async function runQuery(firstPage = false) {
@@ -172,11 +166,9 @@ async function runQuery(firstPage = false) {
   try {
     let qRef = collection(db, 'users')
 
-    // 解析筛选
     const roleEq = (filters.value.role || '').trim()
     const hasDateRange = !!filters.value.from || !!filters.value.to
 
-    // 仅使用「等值」和「单一范围字段」的组合（稳定）
     if (roleEq) {
       qRef = query(qRef, where('role', '==', roleEq))
     }
@@ -191,17 +183,15 @@ async function runQuery(firstPage = false) {
       }
     }
 
-    // 排序规则：若有日期范围，必须先按 createdAt；否则按选择字段
     if (hasDateRange) {
       qRef = query(qRef, orderBy('createdAt', sort.value.dir))
       if (sort.value.field !== 'createdAt') {
-        qRef = query(qRef, orderBy(sort.value.field, sort.value.dir)) // 需要复合索引（按报错链接创建）
+        qRef = query(qRef, orderBy(sort.value.field, sort.value.dir))
       }
     } else {
       qRef = query(qRef, orderBy(sort.value.field, sort.value.dir))
     }
 
-    // 分页
     qRef = query(qRef, limit(10))
     if (!firstPage && lastDocPerPage[page.value - 1]) {
       qRef = query(qRef, startAfter(lastDocPerPage[page.value - 1]))
@@ -212,7 +202,6 @@ async function runQuery(firstPage = false) {
     hasMore.value = snap.size === 10
     if (snap.docs.length > 0) lastDocPerPage[page.value] = snap.docs[snap.docs.length - 1]
 
-    // 前端前缀过滤（在本页 10 条上做，体验依然流畅）
     const uPrefix = (filters.value.username || '').trim().toLowerCase()
     const ePrefix = (filters.value.email || '').trim().toLowerCase()
     if (uPrefix) list = list.filter(x => (x.username || '').toLowerCase().startsWith(uPrefix))
@@ -225,7 +214,7 @@ async function runQuery(firstPage = false) {
   }
 }
 
-// 任何筛选项变化都重载（包含 role）
+// 任何筛选项变化都重载
 watch(() => ({...filters.value, sort: {...sort.value}}), () => {
   page.value = 0
   lastDocPerPage.length = 0
@@ -253,10 +242,8 @@ const allChecked = computed(() => rows.value.length > 0 && rows.value.every(r =>
 function isChecked(u) { return selected.value.some(s => s.id === u.id) }
 function toggleAll() {
     if (allChecked.value) {
-        // 取消本页所有
         selected.value = selected.value.filter(s => !rows.value.some(r => r.id === s.id))
     } else {
-        // 加上本页未选
         const add = rows.value
             .filter(r => !selected.value.some(s => s.id === r.id))
             .map(r => ({ id: r.id, email: r.email, name: r.username, uid: r.id }))
@@ -269,9 +256,7 @@ function toggleOne(u) {
     else selected.value.push({ id: u.id, email: u.email, name: u.username, uid: u.id })
 }
 function emitEmail() {
-    // 过滤掉未允许群发的（后端仍二次校验）
-    const list = selected.value
-        .filter(s => !!s.email)
+    const list = selected.value.filter(s => !!s.email)
     emit('openEmailComposer', list)
 }
 
@@ -297,7 +282,6 @@ function exportCSV() {
 
 async function exportPDF () {
   try {
-    // 用 pt 保证兼容，A4 竖版
     const doc = new jsPDF({ unit: 'pt', format: 'a4' })
 
     const head = [['Username','Email','Role','Allow Bulk','Created','Updated']]
@@ -310,19 +294,17 @@ async function exportPDF () {
       fmt(u.updatedAt),
     ])
 
-    // ✅ 正确调用方式：autoTable(doc, options)
     autoTable(doc, {
       head,
       body,
       styles: { fontSize: 9 },
-      headStyles: { fillColor: [13, 110, 253] }, // Bootstrap primary
+      headStyles: { fillColor: [13, 110, 253] },
       margin: { top: 40, left: 24, right: 24 },
       columnStyles: {
         0: { cellWidth: 90 },
         1: { cellWidth: 160 },
         2: { cellWidth: 60 },
         3: { cellWidth: 70 },
-        // Created / Updated 自适应
       }
     })
 
@@ -336,7 +318,6 @@ async function exportPDF () {
 /* 自动触发 */
 onMounted(() => { reload() })
 watch(filters, () => {
-    // 简单节流
     clearTimeout(window.__utimer)
     window.__utimer = setTimeout(() => reload(), 300)
 }, { deep: true })

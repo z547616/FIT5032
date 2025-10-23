@@ -117,7 +117,7 @@
 <script setup>
 import { ref, computed } from 'vue'
 import { db } from '../../firebase'
-import { collection, addDoc, serverTimestamp } from 'firebase/firestore'
+import { collection, addDoc, serverTimestamp, doc, getDoc } from 'firebase/firestore'
 import { getAuth } from 'firebase/auth'
 
 /** Props & Emits */
@@ -208,14 +208,34 @@ async function sendEmail () {
     // 当前管理员信息
     const auth = getAuth()
     const user = auth.currentUser
-    const byUid = user?.uid || null
-    const byEmail = user?.email || ''
+    const byUid = user && user.uid ? user.uid : null
+    const byEmail = user && user.email ? user.email : ''
+
+    // 从 users/{uid} 取 username（优先），否则回落到 displayName 或 email 前缀
+    let byUsername = ''
+    if (byUid) {
+      try {
+        const snap = await getDoc(doc(db, 'users', byUid))
+        if (snap && snap.exists()) {
+          const d = snap.data() || {}
+          if (typeof d.username === 'string' && d.username.trim()) {
+            byUsername = d.username.trim()
+          }
+        }
+      } catch (_) {}
+    }
+    if (!byUsername) {
+      const displayName = user && user.displayName ? user.displayName : ''
+      if (displayName) byUsername = displayName
+      else if (byEmail) byUsername = byEmail.split('@')[0]
+      else byUsername = 'Administrator'
+    }
 
     // 收件人整理
     const recipients = props.recipients
       .map((r) => ({
-        email: String(r?.email || '').trim(),
-        name: String(r?.name || r?.username || '').trim()
+        email: String(r && r.email ? r.email : '').trim(),
+        name: String(r && (r.name || r.username) ? (r.name || r.username) : '').trim()
       }))
       .filter((r) => r.email)
 
@@ -227,7 +247,8 @@ async function sendEmail () {
 
     console.log('[EmailComposer] queue job recipients:', recipients)
 
-    // ✅ 只写 createdBy(uid) + createdByEmail(供展示)
+    // ✅ 写入 createdBy 为字符串（管理员 email），确保 Admin.vue 现有模板可直接显示
+    // ✅ 同时写入 createdByInfo（对象）以保存 uid/email/username 三项信息
     const ref = await addDoc(collection(db, 'mail_jobs'), {
       status: 'queued',
       createdAt: serverTimestamp(),
@@ -236,8 +257,12 @@ async function sendEmail () {
       html: form.value.html.trim(),
       recipients,
       attachments: form.value.attachments,
-      createdBy: byUid,
-      createdByEmail: byEmail
+      createdBy: byEmail, // ← Admin 列表可直接显示
+      createdByInfo: {
+        uid: byUid,
+        email: byEmail,
+        username: byUsername
+      }
     })
 
     console.log('[EmailComposer] job created:', ref.id)
@@ -248,7 +273,7 @@ async function sendEmail () {
     }, 600)
   } catch (e) {
     console.error('[EmailComposer] create mail job failed', e)
-    err.value = e?.message || 'Failed to queue email job.'
+    err.value = e && e.message ? e.message : 'Failed to queue email job.'
   } finally {
     sending.value = false
   }
