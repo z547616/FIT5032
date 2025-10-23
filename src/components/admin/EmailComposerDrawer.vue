@@ -140,6 +140,16 @@ const okMsg = ref('')
 const fileInput = ref(null)
 
 /* ---------- Helpers ---------- */
+/**
+ * displayRecipient(r)
+ * 功能：将收件人的显示名称按优先级格式化输出。
+ * 逻辑：
+ * 1) 若对象为空，返回 'Unknown'；
+ * 2) 优先使用 r.name（非空白）；
+ * 3) 其次使用 r.username（非空白）；
+ * 4) 再次使用 r.email（非空白）；
+ * 5) 都不可用则返回 'Unknown'。
+ */
 function displayRecipient (r) {
   if (!r) return 'Unknown'
   if (r.name && String(r.name).trim()) return r.name
@@ -148,6 +158,14 @@ function displayRecipient (r) {
   return 'Unknown'
 }
 
+/**
+ * canSend（计算属性）
+ * 功能：判断是否满足发送邮件的必要条件。
+ * 逻辑：
+ * 1) 至少有一个有效的收件人（props.recipients 数组非空）；
+ * 2) 主题非空（form.subject 去空白后非空字符串）；
+ * 3) 正文必须提供纯文本 text 或 HTML 至少其一（去空白后非空）。
+ */
 const canSend = computed(() => {
   const hasRecipients = Array.isArray(props.recipients) && props.recipients.length > 0
   const hasSubject = !!form.value.subject.trim()
@@ -155,7 +173,20 @@ const canSend = computed(() => {
   return hasRecipients && hasSubject && hasBody
 })
 
+/**
+ * handleClose()
+ * 功能：关闭弹窗。
+ * 逻辑：直接通过 emit('close') 通知父组件。
+ */
 function handleClose () { emit('close') }
+
+/**
+ * confirmClose()
+ * 功能：带确认的关闭弹窗，避免误关丢失输入内容。
+ * 逻辑：
+ * 1) 若表单任一字段（subject/text/html/attachments）非空，则弹出确认框；
+ * 2) 用户取消则不关闭；确认后或表单为空则调用 handleClose()。
+ */
 function confirmClose () {
   if (form.value.subject || form.value.text || form.value.html || form.value.attachments.length) {
     if (!window.confirm('Close without sending? Your inputs will be discarded.')) return
@@ -163,10 +194,25 @@ function confirmClose () {
   handleClose()
 }
 
+/**
+ * removeAttachment(i)
+ * 功能：移除第 i 个附件。
+ * 逻辑：索引在合法范围内则使用 splice 删除该附件。
+ */
 function removeAttachment (i) {
   if (i >= 0 && i < form.value.attachments.length) form.value.attachments.splice(i, 1)
 }
 
+/**
+ * onPickFiles(e)
+ * 功能：处理文件选择事件，把文件读入并转换为附件对象后加入表单。
+ * 逻辑：
+ * 1) 从 input 事件中取出 File 列表，若为空直接返回；
+ * 2) 清空错误消息，批量调用 fileToAttachment 转 base64；
+ * 3) 转换成功将附件数组 push 到 form.attachments；
+ * 4) 出错时记录错误信息，控制台打印异常；
+ * 5) 最后重置文件输入框的值，便于重复选择相同文件。
+ */
 async function onPickFiles (e) {
   const files = Array.from(e.target.files || [])
   if (!files.length) return
@@ -182,6 +228,14 @@ async function onPickFiles (e) {
   }
 }
 
+/**
+ * readAsDataURL(file)
+ * 功能：以 DataURL（base64 编码）形式异步读取文件内容。
+ * 逻辑：
+ * - 封装 FileReader 为 Promise；
+ * - onload 解析结果，onerror 拒绝；
+ * - readAsDataURL 以便后续提取 base64 部分。
+ */
 function readAsDataURL (file) {
   return new Promise((resolve, reject) => {
     const fr = new FileReader()
@@ -191,6 +245,15 @@ function readAsDataURL (file) {
   })
 }
 
+/**
+ * fileToAttachment(file)
+ * 功能：将 File 转为邮件附件对象。
+ * 逻辑：
+ * 1) 调用 readAsDataURL 读取文件并得到 dataURL；
+ * 2) 从 dataURL 中分离出逗号后的 base64 字符串；
+ * 3) 返回包含 name、mimeType、contentBase64 三字段的附件对象；
+ * 4) 若无类型信息则回退为 'application/octet-stream'。
+ */
 async function fileToAttachment (file) {
   const dataUrl = await readAsDataURL(file)
   const base64 = String(dataUrl).split(',')[1] || ''
@@ -198,6 +261,21 @@ async function fileToAttachment (file) {
 }
 
 /* ---------- Send Email ---------- */
+/**
+ * sendEmail()
+ * 功能：将邮件发送任务写入 Firestore 队列（mail_jobs），由后端/云函数异步实际发送。
+ * 逻辑：
+ * 1) 前置校验：若不满足 canSend 或处于发送中状态，直接返回；
+ * 2) 进入发送态：sending=true，清空 err/okMsg；
+ * 3) 获取当前管理员信息（Firebase Auth），提取 uid/email；
+ * 4) 优先从 Firestore 的 users/{uid} 获取 username；若无则回退为 displayName，再无则取 email 前缀，最后默认 'Administrator'；
+ * 5) 规整收件人列表：只保留有 email 的项，并携带 name（name 或 username）；
+ * 6) 若无有效收件人，提示错误并结束；
+ * 7) 向 mail_jobs 集合写入任务文档：状态 queued、时间戳、主题、正文（text/html）、收件人、附件、以及创建者信息（createdBy + createdByInfo）；
+ * 8) 成功后设置 okMsg 提示，同时通过 setTimeout 触发 emit('sent') 并关闭对话框，增强用户体验；
+ * 9) 捕获错误并写入 err 供 UI 展示；
+ * 10) finally 中将 sending 复位为 false。
+ */
 async function sendEmail () {
   if (!canSend.value || sending.value) return
   sending.value = true
@@ -279,6 +357,7 @@ async function sendEmail () {
   }
 }
 </script>
+
 
 <style scoped>
 .ec-overlay {

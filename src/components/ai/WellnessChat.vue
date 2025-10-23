@@ -70,11 +70,35 @@ const sending = ref(false)
 const errorMsg = ref('')
 const threadEl = ref(null)
 
+/**
+ * canSend（计算属性）
+ * 功能：判断当前输入框内容是否满足发送条件。
+ * 逻辑：
+ * - 对 draft 去除首尾空白后检查长度是否 > 0；
+ * - 返回布尔值以控制“发送”按钮禁用态与回车发送逻辑。
+ */
 const canSend = computed(() => draft.value.trim().length > 0)
 
+/**
+ * nl2br(s = '')
+ * 功能：将纯文本中的换行符转换为 HTML 的 <br/> 标签，便于在 v-html 中正确换行展示。
+ * 逻辑：
+ * - 将输入强制转为字符串；
+ * - 使用正则全局替换所有 \n 为 <br/>；
+ * - 返回转换后的字符串。
+ */
 function nl2br(s='') {
   return String(s).replace(/\n/g, '<br/>')
 }
+
+/**
+ * scrollToBottom()
+ * 功能：将消息滚动容器滚动到最底部，保证最新消息可见。
+ * 逻辑：
+ * - 使用 nextTick 等待 DOM 更新完成后再操作滚动条；
+ * - 读取 threadEl 的 DOM 节点，如果存在则将 scrollTop 设为 scrollHeight；
+ * - try/catch 防御潜在的 DOM 读取异常。
+ */
 function scrollToBottom() {
   nextTick(() => {
     try {
@@ -83,17 +107,46 @@ function scrollToBottom() {
     } catch {}
   })
 }
+
+/**
+ * clearChat()
+ * 功能：清空当前会话消息与错误提示。
+ * 逻辑：
+ * - 将 messages 置为空数组；
+ * - 将 errorMsg 置空，恢复无错误状态。
+ */
 function clearChat() {
   messages.value = []
   errorMsg.value = ''
 }
 
+/**
+ * enterToSend(e)
+ * 功能：处理输入框的回车行为——区分换行与发送。
+ * 逻辑：
+ * - 若按下的是 Shift+Enter，则不发送，仅用于换行（直接 return）；
+ * - 否则调用 send() 执行发送流程。
+ */
 function enterToSend(e) {
   // Shift+Enter -> 换行；纯 Enter -> 发送
   if (e.shiftKey) return
   send()
 }
 
+/**
+ * send()
+ * 功能：发送当前输入消息到后端（通过云函数转发到 AI 模型），并将对话结果加入消息列表。
+ * 逻辑：
+ * 1) 读取并裁剪 draft，若为空或正在发送中(sending=true)则直接返回；
+ * 2) 清空 errorMsg，将用户消息立即 push 到 messages 展示；清空输入框、置 sending=true 并滚动到底；
+ * 3) 构造 history：取 messages 的“历史部分”（除去刚推入的最后一条用户消息），并将 role 规范化为 'user'/'model'；
+ * 4) 调用 Firebase Functions：httpsCallable('aiSupportChat')，传入 { prompt, history }；
+ * 5) 解析返回：
+ *    - 若 data.ok 且存在 data.reply，将 AI 回复 push 到 messages；
+ *    - 否则设置 errorMsg，并追加一条兜底提示消息；
+ * 6) 捕获异常：记录控制台错误、设置 errorMsg，并追加兜底提示消息；
+ * 7) finally：无论成功失败都将 sending 复位为 false，并再次滚动到底部，确保最新消息可见。
+ */
 async function send() {
   const prompt = draft.value.trim()
   if (!prompt || sending.value) return
@@ -106,7 +159,7 @@ async function send() {
   scrollToBottom()
 
   try {
-    // 仅把“历史”传过去（不含刚刚输入的用户消息？—— 我们包含它之前的历史）
+    // 仅把“历史”传过去（不含刚刚输入的用户消息，取其之前的消息作为上下文）
     const history = messages.value.slice(0, -1).map(m => ({
       role: m.role === 'user' ? 'user' : 'model',
       text: m.text
@@ -139,6 +192,7 @@ async function send() {
   }
 }
 </script>
+
 
 <style scoped>
 .wc-thread {
