@@ -417,7 +417,8 @@ async function toggleLike(post) {
       post.likeCount = Math.max(0, (post.likeCount || 0) - 1)
       const set = new Set(likedSet.value); set.delete(pid); likedSet.value = set
     } else {
-      await setDoc(likeRef, { createdAt: serverTimestamp() })
+      // ✅ 统一写 uid + createdAt，配合集合组复合索引
+      await setDoc(likeRef, { uid: me.value.uid, createdAt: serverTimestamp() })
       post.likeCount = (post.likeCount || 0) + 1
       const set = new Set(likedSet.value); set.add(pid); likedSet.value = set
     }

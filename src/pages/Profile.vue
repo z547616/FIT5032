@@ -8,13 +8,8 @@
           </h3>
 
           <!-- Save (self only) -->
-          <button
-            v-if="isSelf"
-            class="btn btn-primary"
-            :disabled="saving || !isDirty"
-            @click="saveProfile"
-            title="Save changes"
-          >
+          <button v-if="isSelf" class="btn btn-primary" :disabled="saving || !isDirty" @click="saveProfile"
+            title="Save changes">
             {{ saving ? "Saving..." : "Save" }}
           </button>
         </div>
@@ -26,25 +21,16 @@
           <!-- Avatar -->
           <div class="col-md-4">
             <div class="text-center">
-              <img
-                :src="avatarPreview || profile.avatar || defaultAvatar"
-                alt="avatar"
-                class="rounded-circle shadow-sm clickable"
-                width="140"
-                height="140"
-                style="object-fit: cover"
-                @click="openLightbox(profile.avatar || defaultAvatar)"
-              />
+              <img :src="avatarPreview || profile.avatar || defaultAvatar" alt="avatar"
+                class="rounded-circle shadow-sm clickable" width="140" height="140" style="object-fit: cover"
+                @click="openLightbox(profile.avatar || defaultAvatar)" />
               <div class="mt-3 d-grid gap-2" v-if="isSelf">
                 <label class="btn btn-outline-secondary mb-0">
                   <input type="file" accept="image/*" class="d-none" @change="onPickAvatar" />
                   Choose Avatar
                 </label>
-                <button
-                  class="btn btn-outline-danger"
-                  @click="removeAvatar"
-                  :disabled="(!profile.avatar && !avatarPreview) || uploading"
-                >
+                <button class="btn btn-outline-danger" @click="removeAvatar"
+                  :disabled="(!profile.avatar && !avatarPreview) || uploading">
                   Remove
                 </button>
               </div>
@@ -57,22 +43,23 @@
           <!-- Editable fields -->
           <div class="col-md-8">
             <div class="row g-3">
+              <!-- Username -->
               <div class="col-12">
                 <label class="form-label fw-semibold">Username</label>
-                <input
-                  v-model="draft.username"
-                  type="text"
-                  class="form-control"
-                  maxlength="20"
-                  placeholder="Your display name"
-                  :readonly="!isSelf"
-                />
-                <div class="form-text">Max 20 chars. Letters, digits, spaces, - _ . only.</div>
+                <input :value="isSelf ? draft.username : profile.username"
+                  @input="isSelf && (draft.username = $event.target.value)" type="text" class="form-control"
+                  maxlength="20" placeholder="Your display name" :readonly="!isSelf" />
+                <!-- 仅自己时显示提示语 -->
+                <div class="form-text" v-if="isSelf">
+                  Max 20 chars. Letters, digits, spaces, - _ . only.
+                </div>
               </div>
 
+              <!-- Gender -->
               <div class="col-md-6">
                 <label class="form-label fw-semibold">Gender</label>
-                <select v-model="draft.gender" class="form-select" :disabled="!isSelf">
+                <select class="form-select" :value="isSelf ? draft.gender : profile.gender"
+                  @change="isSelf && (draft.gender = $event.target.value)" :disabled="!isSelf">
                   <option>Male</option>
                   <option>Female</option>
                   <option>Other</option>
@@ -80,20 +67,15 @@
                 </select>
               </div>
 
+              <!-- Age -->
               <div class="col-md-6">
                 <label class="form-label fw-semibold">Age</label>
-                <input
-                  v-model.number="draft.age"
-                  type="number"
-                  class="form-control"
-                  min="1"
-                  max="120"
-                  placeholder="Age"
-                  :readonly="!isSelf"
-                />
+                <input :value="isSelf ? draft.age : profile.age"
+                  @input="isSelf && (draft.age = Number($event.target.value))" type="number" class="form-control"
+                  min="1" max="120" placeholder="Age" :readonly="!isSelf" />
               </div>
 
-              <hr class="mt-3 mb-2"/>
+              <hr class="mt-3 mb-2" />
 
               <!-- Readonly -->
               <div class="col-md-6">
@@ -114,6 +96,7 @@
               </div>
             </div>
           </div>
+
         </div>
 
         <!-- Footer buttons (self only) -->
@@ -138,16 +121,8 @@
       </div>
 
       <div class="card-body">
-        <Cropper
-          ref="cropperRef"
-          class="vac-cropper"
-          :src="cropperSrc"
-          :stencil-component="RectangleStencil"
-          :stencil-props="{ aspectRatio: 1 }"
-          :auto-zoom="false"
-          :transitions="false"
-          :image-restriction="'fit-area'"
-        />
+        <Cropper ref="cropperRef" class="vac-cropper" :src="cropperSrc" :stencil-component="RectangleStencil"
+          :stencil-props="{ aspectRatio: 1 }" :auto-zoom="false" :transitions="false" :image-restriction="'fit-area'" />
       </div>
 
       <div class="card-footer d-flex justify-content-end gap-2">
@@ -309,7 +284,7 @@ async function resolveViewingUidAndLoad() {
         draft.value.age = profile.value.age
       }
     }
-  } catch {}
+  } catch { }
   startUserDocListener(q)
 }
 
@@ -403,7 +378,7 @@ async function saveProfile() {
   const patch = {}
   const cleanedName = cleanUsername(draft.value.username)
   const cleanedAge = clampAge(draft.value.age)
-  const allowedGenders = ["Male","Female","Other","Prefer not to say"]
+  const allowedGenders = ["Male", "Female", "Other", "Prefer not to say"]
   const cleanedGender = allowedGenders.includes(draft.value.gender) ? draft.value.gender : "Prefer not to say"
 
   if (cleanedName !== (profile.value.username || "")) patch.username = cleanedName
@@ -473,31 +448,43 @@ function closeLightbox() {
 </script>
 
 <style scoped>
-.clickable { cursor: pointer; transition: opacity .2s ease }
-.clickable:hover { opacity: 0.85 }
+.clickable {
+  cursor: pointer;
+  transition: opacity .2s ease
+}
+
+.clickable:hover {
+  opacity: 0.85
+}
 
 /* 裁剪弹窗：遮罩半透明；内容白底居中 */
-.vac-backdrop{
-  position: fixed; inset: 0; z-index: 3000;
-  background: rgba(0,0,0,.55);
-  display: flex; align-items: center; justify-content: center;
+.vac-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 3000;
+  background: rgba(0, 0, 0, .55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
   padding: 16px;
 }
-.vac-modal{
+
+.vac-modal {
   width: min(92vw, 860px);
   background: #fff;
   border-radius: 12px;
 }
+
 .vac-modal .card,
 .vac-modal .card-header,
 .vac-modal .card-body,
-.vac-modal .card-footer{
+.vac-modal .card-footer {
   background: #fff !important;
   border: 0;
 }
 
 /* 裁剪区域：初始完整显示图片（fit-area），由组件处理缩放 */
-.vac-cropper{
+.vac-cropper {
   width: 100%;
   height: 60vh;
   border-radius: 8px;
@@ -514,13 +501,15 @@ function closeLightbox() {
   z-index: 3500;
   backdrop-filter: blur(2px);
 }
+
 .lightbox-img {
   max-width: 90vw;
   max-height: 90vh;
   border-radius: 10px;
   background: #fff;
-  box-shadow: 0 10px 30px rgba(0,0,0,.4);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, .4);
 }
+
 .close-lightbox {
   position: absolute;
   top: 16px;

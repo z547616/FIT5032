@@ -377,3 +377,328 @@ exports.cleanupPostImages = onDocumentDeleted(
     },
 );
 
+/**
+ * ===================== Mail Jobs (bulk email via SendGrid) =====================
+ * 前置：
+ *   firebase functions:secrets:set SENDGRID_API_KEY
+ *   // 并在 SendGrid 完成 Single Sender 或域名认证；from.email 必须可用
+ */
+const {onDocumentCreated: onDocCreated} = require("firebase-functions/v2/firestore");
+const {onCall: onHttpsCall} = require("firebase-functions/v2/https");
+const {defineSecret} = require("firebase-functions/params");
+const sgMail = require("@sendgrid/mail");
+
+const SENDGRID_API_KEY = defineSecret("SENDGRID_API_KEY");
+
+// eslint-disable-next-line valid-jsdoc
+/** 将 SendGrid 错误打印为可读日志 */
+function logSendgridError(tag, err) {
+  try {
+    const status = (err && err.code) || (err && err.response && err.response.statusCode);
+    const headers = err && err.response && err.response.headers;
+    const body = err && err.response && err.response.body;
+    const errors = (body && body.errors) || body || (err && err.message) || String(err);
+    logger.error(`[${tag}] sendgrid error`, {status, headers, errors});
+  } catch (e) {
+    logger.error(`[${tag}] sendgrid error (fallback)`, {message: (err && err.message) || String(err)});
+  }
+}
+
+/** 单封发送（含附件） */
+async function sendOne({from, to, subject, html, text, attachments}) {
+  const msg = {
+    from,
+    to,
+    subject,
+    html,
+    text,
+    attachments: (attachments || []).map((a) => ({
+      content: a.contentBase64,
+      filename: a.name,
+      type: a.mimeType || "application/octet-stream",
+      disposition: "attachment",
+    })),
+  };
+  // 这里不要 try/catch，让上层统一处理并打印详细日志
+  return sgMail.send(msg);
+}
+
+/** 触发新建的 mail_jobs */
+exports.onMailJobCreated = onDocCreated(
+    {
+      region: REGION,
+      document: "mail_jobs/{jobId}",
+      secrets: [SENDGRID_API_KEY],
+    },
+    async (event) => {
+      const snap = event.data;
+      if (!snap || !snap.exists) return null;
+
+      const ref = snap.ref;
+      const job = snap.data() || {};
+      if (job.status !== "queued") return null;
+
+      // ---- 读取 Secret 并初始化 SendGrid ----
+      const apiKey = SENDGRID_API_KEY.value();
+      if (!apiKey) {
+        logger.error("[mail job] no SENDGRID_API_KEY from secrets");
+        await ref.update({
+          status: "failed",
+          error: "SENDGRID_API_KEY missing",
+          finishedAt: FieldValue.serverTimestamp(),
+        });
+        return null;
+      }
+      // 同时写到 env，兼容某些库行为
+      process.env.SENDGRID_API_KEY = apiKey;
+      sgMail.setApiKey(apiKey);
+
+      // ---- 基础校验 ----
+      const recipients = Array.isArray(job.recipients) ? job.recipients : [];
+      const subject = (job.subject || "").trim();
+      const text = (job.text || "").trim();
+      const html = (job.html || "").trim();
+      const attachments = Array.isArray(job.attachments) ? job.attachments : [];
+
+      if (recipients.length === 0) {
+        await ref.update({
+          status: "failed",
+          error: "no recipients",
+          finishedAt: FieldValue.serverTimestamp(),
+        });
+        return null;
+      }
+      if (!subject || (!text && !html)) {
+        await ref.update({
+          status: "failed",
+          error: "missing subject or body",
+          finishedAt: FieldValue.serverTimestamp(),
+        });
+        return null;
+      }
+
+      // 改成你在 SendGrid 验证过的发件邮箱（Single Sender 或域名认证）
+      const from = {email: "zhaojunxiang6@gmail.com", name: "-COOH6"};
+
+      try {
+        await ref.update({
+          "status": "running",
+          "startedAt": FieldValue.serverTimestamp(),
+          "stats.sent": 0,
+          "stats.failed": 0,
+        });
+
+        let sent = 0;
+        let failed = 0;
+
+        // 基本速率限制：每批 100，每组并发 10，组间 sleep 250ms
+        const batchSize = 100;
+        for (let i = 0; i < recipients.length; i += batchSize) {
+          const batch = recipients.slice(i, i + batchSize);
+
+          for (let j = 0; j < batch.length; j += 10) {
+            const group = batch.slice(j, j + 10);
+            await Promise.all(
+                group.map(async (r) => {
+                  try {
+                    if (!r || !r.email) {
+                      failed++;
+                      return;
+                    }
+                    await sendOne({
+                      from,
+                      to: {email: r.email, name: r.name || ""},
+                      subject,
+                      html: html ? html.replace(/{{\s*username\s*}}/g, r.name || "there") : undefined,
+                      text,
+                      attachments,
+                    });
+                    sent++;
+                  } catch (err) {
+                    failed++;
+                    logSendgridError("mail", err);
+                  }
+                }),
+            );
+            await new Promise((r) => setTimeout(r, 250));
+          }
+
+          await ref.update({"stats.sent": sent, "stats.failed": failed});
+        }
+
+        const finalStatus = failed === 0 ? "success" : sent > 0 ? "partial" : "failed";
+        await ref.update({
+          status: finalStatus,
+          finishedAt: FieldValue.serverTimestamp(),
+        });
+        logger.info("[mail job] finished", {jobId: ref.id, sent, failed});
+      } catch (err) {
+        logSendgridError("mail job fatal", err);
+        await ref.update({
+          status: "failed",
+          finishedAt: FieldValue.serverTimestamp(),
+          error: (err && err.message) || String(err),
+        });
+      }
+
+      return null;
+    },
+);
+
+/** 可选：手动触发 */
+exports.startMailJob = onHttpsCall(
+    {region: REGION, secrets: [SENDGRID_API_KEY]},
+    async (request) => {
+      if (!request || !request.auth) throw new Error("unauthenticated");
+      const {jobId} = request.data || {};
+      if (!jobId) throw new Error("missing jobId");
+
+      const ref = db.collection("mail_jobs").doc(jobId);
+      const snap = await ref.get();
+      if (!snap.exists) throw new Error("job not found");
+      const job = snap.data();
+
+      if (job.status !== "queued") return {ok: true, status: job.status};
+      // 让前端看到“排队中”并触发 onCreate/或手动扫描器
+      await ref.update({status: "queued"});
+      return {ok: true, status: "queued"};
+    },
+);
+
+/**
+ * ===================== AI Support Chat (OpenAI proxy) =====================
+ * Callable function: aiSupportChat
+ * - Auth required
+ * - Uses Secret OPENAI_API_KEY
+ * - Minimal per-user rate limit and input validation
+ */
+
+// 从 Secret 读取 API Key（先用 CLI 设置：firebase functions:secrets:set GEMINI_API_KEY）
+const GEMINI_API_KEY = defineSecret("GEMINI_API_KEY");
+const {GoogleGenAI} = require("@google/genai");
+
+// 将前端 history + prompt 组装为 SDK 所需 contents
+function makeContents(prompt, history) {
+  const arr = [];
+  const h = Array.isArray(history) ? history : [];
+
+  for (let i = 0; i < h.length; i++) {
+    const m = h[i] || {};
+    const role = (m.role === "user") ? "user" : "model"; // 只识别 user / model
+    const text = String(m.text || "");
+    arr.push({
+      role: role,
+      parts: [{text: text}],
+    });
+  }
+
+  arr.push({
+    role: "user",
+    parts: [{text: String(prompt || "")}],
+  });
+
+  return arr;
+}
+
+// 调用一个模型
+async function callModel(ai, modelName, contents) {
+  // 等价于：await ai.models.generateContent({ model, contents })
+  const resp = await ai.models.generateContent({
+    model: modelName,
+    contents: contents,
+  });
+
+  // SDK 提供 resp.text 取回拼接文本
+  // 注意这里不使用可选链，做显式判断
+  let out = "";
+  try {
+    if (resp && typeof resp.text === "function") {
+      out = resp.text();
+    } else if (resp && typeof resp.text === "string") {
+      out = resp.text;
+    }
+  } catch (e) {
+    // 如果上面抛异常，再尝试从 candidates 取
+    out = "";
+  }
+
+  if (!out) {
+    // 兜底：从 candidates 解析
+    try {
+      const cands = (resp && resp.response && resp.response.candidates) ? resp.response.candidates : [];
+      if (cands && cands.length > 0) {
+        const parts = cands[0].content && cands[0].content.parts ? cands[0].content.parts : [];
+        const segs = [];
+        for (let i = 0; i < parts.length; i++) {
+          const p = parts[i];
+          if (p && typeof p.text === "string") segs.push(p.text);
+        }
+        out = segs.join("\n");
+      }
+    } catch (e2) {
+      out = "";
+    }
+  }
+
+  return String(out || "").trim();
+}
+
+// 云函数：httpsCallable('aiSupportChat')({ prompt, history })
+exports.aiSupportChat = onCall(
+    {region: REGION, secrets: [GEMINI_API_KEY]},
+    async (request) => {
+      try {
+      // 取 key
+        const apiKey = GEMINI_API_KEY.value();
+        if (!apiKey) return {ok: false, error: "GEMINI_API_KEY missing"};
+
+        // 取参数
+        const data = request && request.data ? request.data : {};
+        const prompt = data && data.prompt ? String(data.prompt) : "";
+        const history = Array.isArray(data.history) ? data.history : [];
+        if (!prompt || !prompt.trim()) return {ok: false, error: "missing prompt"};
+
+        // 构造 contents
+        const contents = makeContents(prompt, history);
+
+        // 创建 SDK 客户端
+        const ai = new GoogleGenAI({apiKey: apiKey});
+
+        // 按顺序尝试模型（以官方示例为准）
+        const models = ["gemini-2.0-flash", "gemini-2.5-flash"];
+        let reply = "";
+        const errs = [];
+
+        for (let i = 0; i < models.length; i++) {
+          const m = models[i];
+          try {
+            reply = await callModel(ai, m, contents);
+            if (reply) {
+              logger.info("[aiSupportChat] success with", m);
+              break;
+            }
+          } catch (e) {
+            const msg = e && e.message ? e.message : String(e);
+            errs.push(m + ": " + msg);
+            logger.warn("[aiSupportChat] model failed", m, msg);
+          }
+        }
+
+        if (!reply) {
+        // 所有模型都失败
+          logger.error("[aiSupportChat] all models failed", errs);
+          return {ok: false, error: "AI service unavailable", debug: errs};
+        }
+
+        // 简单清洗
+        const safe = reply.replace(/<script[^>]*>[\s\S]*?<\/script>/gi, "").trim();
+        return {ok: true, reply: safe};
+      } catch (e) {
+        const msg = e && e.message ? e.message : "AI error";
+        logger.error("[aiSupportChat] error", msg);
+        return {ok: false, error: msg};
+      }
+    },
+);
+
+

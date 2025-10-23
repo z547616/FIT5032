@@ -8,6 +8,7 @@ import Admin from '../pages/Admin.vue'
 import MoodSpace from '../pages/MoodSpace.vue'
 import MapExplore from '../pages/MapExplore.vue'
 import MoodWalks from '../pages/MoodWalks.vue'
+import MyMoodSpace from '../pages/MyMoodSpace.vue'
 
 // Firebase
 import { getAuth, onAuthStateChanged } from "firebase/auth"
@@ -16,7 +17,7 @@ import { getFirestore, doc, getDoc } from "firebase/firestore"
 const routes = [
   {
     path: '/',
-    redirect: '/home'
+    redirect: '/home' // 初始仍指向 /home，由守卫在登录后进行角色感知重定向
   },
   { path: '/login', component: Login, meta: { title: 'MindBloom | Login', icon: 'bi bi-box-arrow-in-right' } },
   { path: '/register', component: Register, meta: { title: 'MindBloom | Register', icon: 'bi bi-person-plus' } },
@@ -27,21 +28,15 @@ const routes = [
   { path: '/admin', component: Admin, meta: { requiresAuth: true, requiresAdmin: true, title: 'MindBloom | Admin', icon: 'bi bi-shield-lock' } },
   { path: '/map-explore', component: MapExplore, meta: { requiresAuth: true, title: 'MindBloom | Find Help Near Me', icon: 'bi bi-geo-alt' } },
   { path: '/mood-walks', component: MoodWalks, meta: { requiresAuth: true, title: 'MindBloom | MoodWalks', icon: 'bi bi-signpost' } },
+  { path: '/my-mood-space', component: MyMoodSpace, meta: { requiresAuth: true, title: 'MindBloom | My Mood Space', icon: 'bi bi-bookmark-heart' } },
 ]
-
-  //{
-  //   path: '/get-all-mood',
-  //   // 如果你已手动 import 了组件，可改为：component: GetAllMood,
-  //   component: () => import('../pages/GetAllMood.vue'),
-  //   meta: { requiresAuth: true, title: 'MindBloom | GetAllMood (JSON)', icon: 'bi bi-code' }
-  // },
 
 const router = createRouter({
   history: createWebHistory(),
   routes
 })
 
-// 登录 + 管理员访问控制
+// 登录 + 管理员访问控制 + 登录后默认路由（管理员→/admin）
 router.beforeEach((to, from, next) => {
   const auth = getAuth()
   const db = getFirestore()
@@ -49,29 +44,59 @@ router.beforeEach((to, from, next) => {
   const requiresAuth = to.matched.some(record => record.meta.requiresAuth)
   const requiresAdmin = to.matched.some(record => record.meta.requiresAdmin)
 
+  const redirectByRole = async (user) => {
+    try {
+      const userDoc = await getDoc(doc(db, "users", user.uid))
+      const role = (userDoc.exists() && userDoc.data().role) || 'user'
+      if (role === 'admin') return next('/admin')
+      return next('/home')
+    } catch (e) {
+      console.error("Error checking user role:", e)
+      return next('/home')
+    }
+  }
+
   onAuthStateChanged(auth, async (user) => {
+    // 1) 未登录但目标需要鉴权 → 去登录
     if (!user && requiresAuth) {
-      // 未登录 → login
-      next('/login')
-    } else if (user && (to.path === '/login' || to.path === '/register')) {
-      // 已登录 → home
-      next('/home')
-    } else if (user && requiresAdmin) {
-      // 需要管理员权限
+      return next('/login')
+    }
+
+    // 2) 已登录但去 login/register → 按角色送到 admin 或 home
+    if (user && (to.path === '/login' || to.path === '/register')) {
+      return redirectByRole(user)
+    }
+
+    // 3) 访问需要管理员权限的路由
+    if (user && requiresAdmin) {
       try {
-        const userDoc = await getDoc(doc(db, "users", user.uid))
-        if (userDoc.exists() && userDoc.data().role === "admin") {
-          next() // 允许进入
+        const snap = await getDoc(doc(db, "users", user.uid))
+        if (snap.exists() && snap.data().role === "admin") {
+          return next()
         } else {
-          next('/home') // 非管理员 → 回 home
+          return next('/home')
         }
       } catch (err) {
         console.error("Error checking admin role:", err)
-        next('/home')
+        return next('/home')
       }
-    } else {
-      next()
     }
+
+    // 4) 默认登录后 “管理员优先去 /admin” 的体验：
+    // 当目标是 /home 且来源是初始入口(/、/login、/register)时，如为管理员则改送 /admin
+    if (user && to.path === '/home' && ['/', '/login', '/register', ''].includes(from?.path || '')) {
+      try {
+        const snap = await getDoc(doc(db, "users", user.uid))
+        if (snap.exists() && snap.data().role === "admin") {
+          return next('/admin')
+        }
+      } catch (e) {
+        // 忽略错误，按原路继续
+      }
+    }
+
+    // 5) 其他情况放行
+    return next()
   })
 })
 

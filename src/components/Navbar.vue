@@ -70,7 +70,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onBeforeUnmount } from "vue"
+import { ref, computed, onMounted, onBeforeUnmount, watch } from "vue"
 import { useRouter } from "vue-router"
 import WeatherBadge from "./WeatherBadge.vue"
 
@@ -82,17 +82,13 @@ import { doc, onSnapshot } from "firebase/firestore"
 const router = useRouter()
 
 const navItems = [
-  { label: "Home", icon: "bi bi-house-door", path: "/home" },
-  { label: "Mood Tracker", icon: "bi bi-emoji-smile", path: "/mood-tracker" },
-  { label: "Mood Space", icon: "bi bi-chat-heart", path: "/mood-space" },
-  { label: 'Mood Walks', icon: 'bi bi-signpost', path: '/mood-walks' },
-  // { label: 'Find Help', icon: 'bi bi-geo-alt', path: '/map-explore' },
-  { label: "Profile", icon: "bi bi-person-circle", path: "/profile" },
+  { label: "Home",          icon: "bi bi-house-door",   path: "/home" },
+  { label: "Mood Tracker",  icon: "bi bi-emoji-smile",  path: "/mood-tracker" },
+  { label: "Mood Walks",    icon: "bi bi-signpost",     path: "/mood-walks" },
+  { label: "Mood Space",    icon: "bi bi-chat-heart",   path: "/mood-space" },
+  { label: "My Mood Space", icon: "bi bi-bookmark-heart", path: "/my-mood-space" },
+  { label: "Profile",       icon: "bi bi-person-circle", path: "/profile" },
 ]
-
-  // { label: "Resources", icon: "bi bi-book", path: "#" },
-  // { label: "Community & Support", icon: "bi bi-people", path: "#" },
-  // { label: "Get Help", icon: "bi bi-life-preserver", path: "#" },
 
 const isOpen = ref(false)
 const showUserMenu = ref(false)
@@ -107,7 +103,6 @@ const avatarBust = ref(0)
 let unsubscribeUserDoc = null
 
 onAuthStateChanged(auth, (firebaseUser) => {
-  // 清理旧监听
   if (typeof unsubscribeUserDoc === "function") {
     unsubscribeUserDoc()
     unsubscribeUserDoc = null
@@ -174,16 +169,18 @@ const avatarSrc = computed(() => {
   return `${raw}${sep}v=${avatarBust.value || 0}`
 })
 
-function toggleUserMenu() {
-  showUserMenu.value = !showUserMenu.value
-}
+function toggleUserMenu() { showUserMenu.value = !showUserMenu.value }
+
 function goHome() {
-  router.push("/home")
+  if (role.value === 'admin') router.push('/admin')
+  else router.push('/home')
 }
+
 function goProfile() {
   router.push("/profile")
   showUserMenu.value = false
 }
+
 async function logout() {
   await signOut(auth)
   router.push("/login")
@@ -205,7 +202,72 @@ function handleClickOutside(e) {
     showUserMenu.value = false
   }
 }
-onMounted(() => document.addEventListener("click", handleClickOutside))
+
+/* ---------------- Favicon 逻辑：跟随当前页面变化（Emoji SVG 更稳定） ---------------- */
+const iconEmojiMap = {
+  "bi-house-door": "🏠",
+  "bi-emoji-smile": "😊",
+  "bi-signpost": "🚶",
+  "bi-chat-heart": "💬",
+  "bi-bookmark-heart": "🔖",
+  "bi-person-circle": "👤",
+  "bi-shield-lock": "🛡️",
+}
+
+function pickEmojiForRoute() {
+  // 1) 优先使用路由 meta.icon（如果设置过）
+  const metaIcon = router.currentRoute.value?.meta?.icon
+  if (typeof metaIcon === "string") {
+    const key = metaIcon.split(" ").find(k => k.startsWith("bi-"))
+    if (key && iconEmojiMap[key]) return iconEmojiMap[key]
+  }
+
+  // 2) 根据侧栏定义匹配当前 path
+  const path = router.currentRoute.value?.path || ""
+  const item = navItems.find(n => n.path === path)
+  if (item) {
+    const key = item.icon.split(" ").find(k => k.startsWith("bi-"))
+    if (key && iconEmojiMap[key]) return iconEmojiMap[key]
+  }
+
+  // 3) 特殊：管理员页
+  if (path === "/admin") return iconEmojiMap["bi-shield-lock"]
+
+  // 4) 回退
+  return "🌱"
+}
+
+function makeEmojiFaviconDataURL(emoji) {
+  // 用内联 SVG 画一个大 emoji，作为 favicon（跨域安全、渲染稳定）
+  const svg =
+    `<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64">
+      <text x="50%" y="52%" dominant-baseline="middle" text-anchor="middle" font-size="52">${emoji}</text>
+    </svg>`
+  return "data:image/svg+xml," + encodeURIComponent(svg)
+}
+
+function applyFaviconForRoute() {
+  const emoji = pickEmojiForRoute()
+  const href = makeEmojiFaviconDataURL(emoji)
+
+  let link = document.querySelector("link[rel='icon']")
+  if (!link) {
+    link = document.createElement("link")
+    link.rel = "icon"
+    document.head.appendChild(link)
+  }
+  link.href = href
+}
+
+// 初次加载与每次路由切换都更新
+onMounted(() => {
+  document.addEventListener("click", handleClickOutside)
+  applyFaviconForRoute()
+})
+watch(() => router.currentRoute.value.fullPath, () => {
+  applyFaviconForRoute()
+})
+
 onBeforeUnmount(() => {
   document.removeEventListener("click", handleClickOutside)
   if (typeof unsubscribeUserDoc === "function") unsubscribeUserDoc()

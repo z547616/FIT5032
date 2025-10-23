@@ -7,22 +7,12 @@
         <form @submit.prevent="handleRegister">
           <div class="mb-3">
             <label class="form-label">Username</label>
-            <input
-              v-model="form.username"
-              type="text"
-              class="form-control"
-              required
-            />
+            <input v-model="form.username" type="text" class="form-control" required />
           </div>
 
           <div class="mb-3">
             <label class="form-label">Email</label>
-            <input
-              v-model="form.email"
-              type="email"
-              class="form-control"
-              required
-            />
+            <input v-model="form.email" type="email" class="form-control" required />
           </div>
 
           <div class="mb-3">
@@ -60,13 +50,7 @@
 
           <div class="mb-3">
             <label class="form-label">Age</label>
-            <input
-              v-model.number="form.age"
-              type="number"
-              class="form-control"
-              min="1"
-              required
-            />
+            <input v-model.number="form.age" type="number" class="form-control" min="1" required />
           </div>
 
           <button type="submit" class="btn btn-success w-100" :disabled="submitting">
@@ -75,7 +59,7 @@
 
           <div v-if="error" class="text-danger small mt-2">{{ error }}</div>
           <div v-if="success" class="text-success small mt-2">
-            Registered successfully! Redirecting to login...
+            Registered successfully! Redirecting...
           </div>
         </form>
 
@@ -91,16 +75,17 @@
 </template>
 
 <script setup>
-import { ref } from "vue";
-import { useRouter } from "vue-router";
-import { sanitizeInput } from "../utils/sanitize.js";
+import { ref } from "vue"
+import { useRouter } from "vue-router"
+import { sanitizeInput } from "../utils/sanitize.js"
 
 // Firebase
-import { auth, db } from "../firebase";
-import { createUserWithEmailAndPassword } from "firebase/auth";
-import { doc, getDoc, updateDoc, serverTimestamp } from "firebase/firestore";
+import { auth, db, functions } from "../firebase"
+import { createUserWithEmailAndPassword } from "firebase/auth"
+import { doc, setDoc, serverTimestamp } from "firebase/firestore"
+import { httpsCallable } from "firebase/functions"
 
-const router = useRouter();
+const router = useRouter()
 
 const form = ref({
   username: "",
@@ -109,80 +94,74 @@ const form = ref({
   email: "",
   gender: "",
   age: null
-});
+})
 
-const error = ref("");
-const success = ref(false);
-const submitting = ref(false);
+const error = ref("")
+const success = ref(false)
+const submitting = ref(false)
 
-/**
- * 等待 Cloud Function ensureUserProfileOnSignup 创建 users/{uid}
- * 最多重试 5 次，每次间隔 400ms
- */
-async function waitForProfile(uid) {
-  const ref = doc(db, "users", uid);
-  for (let i = 0; i < 5; i++) {
-    const snap = await getDoc(ref);
-    if (snap.exists()) return true;
-    await new Promise(r => setTimeout(r, 400));
-  }
-  return false;
+function clampAge(n) {
+  const x = Number(n)
+  if (!Number.isFinite(x)) return null
+  return Math.min(120, Math.max(1, Math.round(x)))
 }
 
 async function handleRegister() {
-  error.value = "";
-  success.value = false;
-  submitting.value = true;
+  error.value = ""
+  success.value = false
+  submitting.value = true
 
   // 简单清理与校验
-  form.value.username = sanitizeInput(form.value.username, 20);
-  form.value.email = sanitizeInput(form.value.email, 50);
+  form.value.username = sanitizeInput(form.value.username, 20)
+  form.value.email = sanitizeInput(form.value.email, 50)
 
   if (form.value.password !== form.value.confirmPassword) {
-    error.value = "Passwords do not match";
-    submitting.value = false;
-    return;
+    error.value = "Passwords do not match"
+    submitting.value = false
+    return
   }
   if (!/^\S+@\S+\.\S+$/.test(form.value.email)) {
-    error.value = "Invalid email format";
-    submitting.value = false;
-    return;
+    error.value = "Invalid email format"
+    submitting.value = false
+    return
   }
 
   try {
-    // 1) Auth 注册
-    const userCredential = await createUserWithEmailAndPassword(
+    // 1) 注册 Auth
+    const cred = await createUserWithEmailAndPassword(
       auth,
       form.value.email,
       form.value.password
-    );
-    const user = userCredential.user;
+    )
+    const user = cred.user
 
-    // 2) 等待后端（Cloud Function）创建 users/{uid} 并写入 createdAt、默认字段
-    const ok = await waitForProfile(user.uid);
-    if (!ok) {
-      // 即使等不到，也先继续；后面的 update 若因规则失败会抛错
-      console.warn("[Register] profile doc not detected after retries; continue to update");
+    // 2) 确保 users/{uid} 存在（调用后端 callable，若已存在则直接返回）
+    try {
+      const ensure = httpsCallable(functions, "ensureUserProfile")
+      await ensure({})
+    } catch (e) {
+      // 不影响主流程（触发器通常会建好，这里只是双保险）
+      console.warn("[Register] ensureUserProfile callable failed (ignored):", e?.message || e)
     }
 
-    // 3) 仅更新允许的业务字段 + updatedAt（遵循安全规则）
-    //    不修改 email/role/createdAt
-    await updateDoc(doc(db, "users", user.uid), {
-      username: form.value.username,
-      gender: form.value.gender,
-      age: Number(form.value.age),
+    // 3) 使用 setDoc + merge 创建/更新，避免 "No document to update"
+    const patch = {
+      username: form.value.username || (form.value.email.split("@")[0]),
+      gender: form.value.gender || "Prefer not to say",
+      age: clampAge(form.value.age),
       updatedAt: serverTimestamp()
-    });
+    }
+    await setDoc(doc(db, "users", user.uid), patch, { merge: true })
 
-    success.value = true;
+    success.value = true
 
-    // 4) 跳转登录
-    setTimeout(() => router.push("/login"), 1200);
+    // 4) 直接进入已登录首页（路由守卫里也会识别管理员跳 /admin）
+    setTimeout(() => router.push("/home"), 600)
   } catch (err) {
-    console.error(err);
-    error.value = err?.message || "Register failed";
+    console.error(err)
+    error.value = err?.message || "Register failed"
   } finally {
-    submitting.value = false;
+    submitting.value = false
   }
 }
 </script>
