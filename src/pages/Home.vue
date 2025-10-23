@@ -1,16 +1,14 @@
 <template>
   <div class="container py-4" style="max-width: 1200px">
-    
+
     <div class="d-flex align-items-center justify-content-between mb-3">
       <h2 class="text-primary mb-0">Welcome to MindBloom 🌱</h2>
-      
+
       <div class="small text-muted" v-if="me">
         <!-- <i class="bi bi-person-circle me-1"></i>
         {{ me.username || 'User' }} -->
       </div>
     </div>
-
-    <WeatherSearch />
 
     <!-- Loading / Error -->
     <div v-if="loading" class="alert alert-info d-flex align-items-center" role="alert">
@@ -223,6 +221,13 @@ onMounted(() => {
 </script>
 
 <style scoped>
-.clickable { cursor: pointer; transition: transform .12s ease, box-shadow .12s ease; }
-.clickable:hover { transform: translateY(-2px); box-shadow: 0 0.5rem 1rem rgba(0,0,0,.08) !important; }
+.clickable {
+  cursor: pointer;
+  transition: transform .12s ease, box-shadow .12s ease;
+}
+
+.clickable:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 0.5rem 1rem rgba(0, 0, 0, .08) !important;
+}
 </style>
