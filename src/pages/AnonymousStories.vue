@@ -208,7 +208,7 @@ function startEdit(storyId) {
   line-height: 1;
 }
 
-.star-fill {
+/* .star-fill {
   display: inline-block;
   color: #ccc;
   background: linear-gradient(
@@ -219,7 +219,7 @@ function startEdit(storyId) {
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   transition: transform 0.2s;
-}
+} */
 
 .star-fill:hover {
   transform: scale(1.1);
